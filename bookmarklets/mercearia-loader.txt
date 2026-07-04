@@ -1,0 +1,1 @@
+javascript:(()=>{fetch("https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main/src/mercearia.js?v="+Date.now()).then(r=>r.text()).then(t=>Function(t)()).catch(e=>alert("Erro ao carregar Mercearia: "+e))})()
