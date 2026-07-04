@@ -1,1 +1,1 @@
-javascript:(()=>{fetch("https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPOSITORIO/main/src/fresh.js?v="+Date.now()).then(r=>r.text()).then(t=>Function(t)()).catch(e=>alert("Erro ao carregar Fresh: "+e))})()
+javascript:(()=>{fetch("https://raw.githubusercontent.com/miguelfidelis1/slc-preop/main/src/fresh.js?v="+Date.now()).then(r=>r.text()).then(t=>Function(t)()).catch(e=>alert("Erro ao carregar Fresh: "+e))})()
