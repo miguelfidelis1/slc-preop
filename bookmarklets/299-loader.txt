@@ -1,0 +1,1 @@
+javascript:(()=>{fetch("https://raw.githubusercontent.com/miguelfidelis1/slc-preop/main/src/299.js?v="+Date.now()).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.text()}).then(c=>new Function(c)()).catch(e=>alert("Erro ao carregar Só 299:\n"+e));})();
