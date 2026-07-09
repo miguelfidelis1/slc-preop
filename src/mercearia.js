@@ -1,11 +1,11 @@
 /*
  * SLC PreOp KDABRA - Mercearia Reprint 7D
- * Versao: v1.0.3 - Prepara 299 antes de montar fila + trava anti-mistura + IA
+ * Versao: v1.0.4 - Fila principal sem impressao exclusiva + trava anti-mistura + IA
  * Uso via bookmarklet carregador pelo GitHub.
  * Nao coloque API key, token, senha ou dado sensivel neste arquivo.
  */
 (async()=>{
-  const CONFIG={modo:"Mercearia",titulo:"KDABRA Mercearia Reprint 7D",botao:"mercearia",espera:900,a200:200,b200:210,a300:300,b300:310,reprintDias:7,tentativasBusca:3,exigirLevaNos299:true};
+  const CONFIG={modo:"Mercearia",titulo:"KDABRA Mercearia Reprint 7D",botao:"mercearia",espera:900,a200:200,b200:210,a300:300,b300:310,reprintDias:7,tentativasBusca:3,separacaoExclusiva:true};
   const $=s=>document.querySelector(s),sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const norm=x=>String(x||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim();
   const key=x=>norm(x).toUpperCase(),compact=x=>key(x).replace(/[^A-Z0-9]/g,""),clean=x=>String(x||"").replace(/\t/g," ").replace(/\r?\n/g," ").trim(),hoje=()=>new Date().toLocaleDateString("pt-BR");
@@ -13,7 +13,7 @@
   const copy=async txt=>{try{await navigator.clipboard.writeText(txt);return true}catch(e){const ta=document.createElement("textarea");ta.value=txt;ta.style.position="fixed";ta.style.left="-9999px";document.body.appendChild(ta);ta.focus();ta.select();const ok=document.execCommand("copy");ta.remove();return ok}};
   const inicio=new Date();
   let reg=[],parar=false,painel=null,mini=false;
-  const execucao={versao:"v1.0.3-prepara-299-trava-ia",modo:CONFIG.modo,inicio:inicio.toISOString(),fim:null,consultas:0,impressosCopiados:0,reimpressos7d:0,pendentesIgnorados:0,recentesIgnorados:0,semCheckbox:0,duplicadosIgnorados:0,tabelasMisturadas:0,retries:0,lotes:[],checagemCopiadoImpresso:{ok:true,totalSelecionadoParaImprimir:0,totalCopiadoParaPlanilha:0,divergencias:[]},observacaoIA:"Analise se os pedidos selecionados para impressao sao os mesmos copiados para a planilha. A impressao real no papel nao pode ser confirmada pelo navegador; use como base os itens selecionados e enviados ao botao Imprimir."};
+  const execucao={versao:"v1.0.4-fila-principal-sem-exclusivo-trava-ia",modo:CONFIG.modo,inicio:inicio.toISOString(),fim:null,consultas:0,impressosCopiados:0,reimpressos7d:0,pendentesIgnorados:0,recentesIgnorados:0,semCheckbox:0,duplicadosIgnorados:0,tabelasMisturadas:0,retries:0,lotes:[],checagemCopiadoImpresso:{ok:true,totalSelecionadoParaImprimir:0,totalCopiadoParaPlanilha:0,divergencias:[]},observacaoIA:"Analise se os pedidos selecionados para impressao sao os mesmos copiados para a planilha. A impressao real no papel nao pode ser confirmada pelo navegador; use como base os itens selecionados e enviados ao botao Imprimir."};
   const st={status:"Iniciando",modo:CONFIG.modo,atual:"-",i:0,total:0,sel:0,imp:0,pend:0,ja:0,sem:0,rep:0,dup:0,mix:0,retry:0,ia:"Nao chamada",last:"-"};
   const tsv=arr=>arr.map(x=>[x.caminhao,x.rota,x.pedido,x.entrega,x.impressao].map(clean).join("\t")).join("\n");
   const upd=()=>{if(!painel)return;const set=(id,v)=>{const e=painel.querySelector(id);if(e)e.textContent=v};set("#kd_status",st.status);set("#kd_modo",st.modo);set("#kd_atual",st.atual);set("#kd_prog",st.i+" / "+st.total);set("#kd_sel",st.sel);set("#kd_imp",st.imp);set("#kd_pend",st.pend);set("#kd_ja",st.ja);set("#kd_sem",st.sem);set("#kd_rep",st.rep);set("#kd_dup",st.dup);set("#kd_mix",st.mix);set("#kd_retry",st.retry);set("#kd_ia",st.ia);set("#kd_last",st.last);const bar=painel.querySelector("#kd_bar");if(bar){const pct=st.total?Math.min(100,Math.round(st.i/st.total*100)):0;bar.style.width=pct+"%";bar.textContent=pct+"%"}};
@@ -33,31 +33,14 @@
   const esperarTabelaEstavel=async()=>{let anterior="",iguais=0;for(let i=0;i<24;i++){const atual=tabelaSig();if(atual&&atual===anterior){iguais++;if(iguais>=3)return true}else{iguais=0;anterior=atual}await sleep(250)}return true};
   const limparSelecao=()=>{linhas().forEach(row=>{const cb=[...row.querySelectorAll("input[type='checkbox']")].find(x=>x.id!=="check_all");if(cb&&cb.checked){try{cb.click();cb.checked=false;cb.dispatchEvent(new Event("input",{bubbles:true}));cb.dispatchEvent(new Event("change",{bubbles:true}));if(window.jQuery)jQuery(cb).prop("checked",false).trigger("change")}catch(e){}}})};
   const mapa=s=>{const ig=["TODOS","TODO","SELECIONE","","SIM","NAO","NÃO"],m=new Map;ops(s).forEach(o=>{if(o.value&&o.text&&!ig.includes(o.key)&&!m.has(o.key))m.set(o.key,o)});return m};
-  const letras299Ordem=["A","H","B","C","D","E","F","G","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"];
-  const preparar299=async()=>{
-    st.status="Preparando levas do 299";upd();
-    const cs=mapa(E.T),c299=cs.get("299");
-    if(!c299){console.warn("Caminhao 299 nao encontrado nas opcoes.");return false}
-    sel(E.T,c299.value);await sleep(350);filtroTodos();itensNao();await waitKD();
-    let melhor=0;
-    for(let i=0;i<14;i++){
-      const ls=mapa(E.L),qtd=[...ls.keys()].filter(x=>/^[A-Z]$/.test(x)).length;
-      melhor=Math.max(melhor,qtd);
-      if(qtd>=3){console.log("Levas 299 carregadas:",[...ls.keys()].filter(x=>/^[A-Z]$/.test(x)).join(", "));return true}
-      await sleep(300)
-    }
-    console.warn("Poucas levas carregadas para 299. Vou montar com o que existir. Qtd:",melhor);
-    return true
-  };
-  const montar=async()=>{await preparar299();const cs=mapa(E.T),ls=mapa(E.L),fila=[],us=new Set;const add=(num,lv,pri,tipo)=>{const c=cs.get(key(num)),l=ls.get(key(lv));if(!c||!l)return;const id=key(num)+"|"+key(lv);if(us.has(id))return;us.add(id);fila.push({c,l,nome:c.text+l.text,pri,tipo})};
-    letras299Ordem.forEach(x=>add("299",x,"MAX","299 Prioridade Maxima"));
+  const montar=async()=>{const cs=mapa(E.T),ls=mapa(E.L),fila=[],us=new Set;const add=(num,lv,pri,tipo)=>{const c=cs.get(key(num)),l=ls.get(key(lv));if(!c||!l)return;const id=key(num)+"|"+key(lv);if(us.has(id))return;us.add(id);fila.push({c,l,nome:c.text+l.text,pri,tipo})};
     for(let i=100;i<=124;i++)add(String(i),"H","MAX","100H-124H Prioridade Maxima");
     add("R","A","A","RA");add("R","H","A","RH");add("100","H","A","100H");add("H","A","A","HA");for(let i=150;i<=154;i++)add(String(i),"KA","A","KA");for(let i=1;i<=60;i++)add(String(i),"A","A","Original A");for(let i=CONFIG.a200;i<=CONFIG.b200;i++){add(String(i),"A","A","200A");add(String(i),"H","A","200H")}for(let i=CONFIG.a300;i<=CONFIG.b300;i++){add(String(i),"A","A","300A");add(String(i),"H","A","300H")}add("R","B","B","RB");add("H","B","B","HB");add("150","KB","B","150KB");for(let i=1;i<=60;i++)add(String(i),"B","B","Original B");add("100","B","B","100 Pontual B");for(let i=180;i<=184;i++)add(String(i),"NC","B","Leva Noturna NC");add("R","C","C","RC");add("D","C","C","DC");add("200","C","C","200C");add("K","C","C","KC");add("100","C","C","100C");return fila};
   const pend=x=>{const e=norm(x.entrega);return e.includes("pedido pendente")||e.includes("pendente")};
   const parseD=s=>{const m=String(s||"").match(/(\d{2})\/(\d{2})\/(\d{4})/);if(!m)return null;return new Date(+m[3],+m[2]-1,+m[1])};
   const dias=s=>{const d=parseD(s);if(!d)return null;const h=new Date();h.setHours(0,0,0,0);d.setHours(0,0,0,0);return Math.floor((h-d)/86400000)};
   const statusImp=x=>{const im=norm(x.impressao);if(im.includes("nao foi impresso")||im.includes("nao impresso")||im.includes("não foi impresso")||im.includes("não impresso"))return"NAO_IMPRESSO";const di=dias(x.impressao);if(di!==null&&di>=CONFIG.reprintDias)return"REPRINT_7D";return"RECENTE_OU_INVALIDO"};
-  const pertenceAoAlvo=(x,it)=>{const cam=compact(x.caminhao),num=compact(it.c.text),leva=compact(it.l.text),esperado=compact(it.c.text+it.l.text);if(!cam)return{ok:false,motivo:"CAMINHAO_VAZIO"};if(num==="299"&&CONFIG.exigirLevaNos299){if(cam===esperado||cam.includes(esperado))return{ok:true};return{ok:false,motivo:"299_LEVA_DIFERENTE",esperado,encontrado:cam}}if(cam===esperado||cam.includes(esperado))return{ok:true};if(cam===num||cam.includes(num))return{ok:true};return{ok:false,motivo:"CAMINHAO_DIFERENTE",esperado,encontrado:cam}};
+  const pertenceAoAlvo=(x,it)=>{const cam=compact(x.caminhao),num=compact(it.c.text),esperado=compact(it.c.text+it.l.text);if(!cam)return{ok:false,motivo:"CAMINHAO_VAZIO"};if(cam===esperado||cam.includes(esperado))return{ok:true};if(cam===num||cam.includes(num))return{ok:true};return{ok:false,motivo:"CAMINHAO_DIFERENTE",esperado,encontrado:cam}};
   const marca=row=>{const cb=[...row.querySelectorAll("input[type='checkbox']")].find(x=>x.id!=="check_all");if(cb){try{cb.scrollIntoView({block:"center"});if(!cb.checked){cb.click();if(!cb.checked)cb.checked=true;cb.dispatchEvent(new Event("input",{bubbles:true}));cb.dispatchEvent(new Event("change",{bubbles:true}));if(window.jQuery)jQuery(cb).prop("checked",true).trigger("change")}}catch(e){}return true}const td=row.children&&row.children[0];if(td){try{td.scrollIntoView({block:"center"});td.click();return true}catch(e){}}return false};
   const validos=(it,vistos)=>{let arr=[],pendentes=0,recentes=0,sem=0,rep=0,dup=0,fora=0,foraDetalhes=[];linhas().forEach(row=>{const td=[...row.querySelectorAll("td")];if(td.length<6)return;const x={row,caminhao:td[1].innerText.trim(),rota:td[2].innerText.trim(),pedido:td[3].innerText.trim(),entrega:td[4].innerText.trim(),impressao:td[5].innerText.trim()};if(!x.pedido)return;const alvo=pertenceAoAlvo(x,it);if(!alvo.ok){fora++;foraDetalhes.push({esperado:it.nome,caminhaoEncontrado:x.caminhao,rota:x.rota,pedido:x.pedido,motivo:alvo.motivo});return}if(pend(x)){pendentes++;return}const stt=statusImp(x);if(stt==="RECENTE_OU_INVALIDO"){recentes++;return}const pedidoId=compact(x.pedido);if(vistos.has(pedidoId)){dup++;return}if(!marca(row)){sem++;return}if(stt==="REPRINT_7D")rep++;arr.push({...x,status:stt})});return{arr,pendentes,recentes,sem,rep,dup,fora,foraDetalhes}};
   const comparaSelecionadoCopiado=(selecionados,copiados,contexto)=>{const selIds=selecionados.map(x=>compact(x.pedido)),copIds=copiados.map(x=>compact(x.pedido)),divergencias=[];if(selIds.length!==copIds.length)divergencias.push({tipo:"QUANTIDADE_DIFERENTE",contexto,selecionados:selIds.length,copiados:copIds.length});const max=Math.max(selIds.length,copIds.length);for(let i=0;i<max;i++){if(selIds[i]!==copIds[i])divergencias.push({tipo:"PEDIDO_DIFERENTE_NA_ORDEM",contexto,posicao:i+1,selecionado:selIds[i]||null,copiado:copIds[i]||null})}return{ok:divergencias.length===0,selecionados:selIds.length,copiados:copIds.length,divergencias}};
