@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KDABRA falso (simulador)</title>
+<!--
+  Imitação SIMPLIFICADA da tela de Checkout do KDABRA, só com dados inventados.
+  Serve para testar o SLC PreOp sem tocar no sistema real.
+
+  Parâmetros na URL:
+    ?levaTodos=0      → o filtro Leva não tem a opção "Todos"
+    ?colunas=novas    → colunas da tabela em outra ordem
+    ?atraso=400       → tempo (ms) que cada busca demora
+    ?poucos=1         → só os caminhões que têm pedidos (testes mais rápidos)
+  No console: window.__congelar = "210" faz a busca do caminhão 210 não atualizar a tabela.
+-->
+<style>
+  body { font: 14px Arial, sans-serif; margin: 0; background: #eef1f5; color: #222; }
+  header { background: #1f3b73; color: #fff; padding: 12px 20px; font-weight: bold; }
+  main { padding: 16px 20px; }
+  .itens_type_btn { padding: 8px 16px; border: 1px solid #1f3b73; background: #fff; cursor: pointer; }
+  .itens_type_btn.active { background: #1f3b73; color: #fff; }
+  .filtros { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin: 14px 0; }
+  label { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
+  select, button { padding: 6px; }
+  table { border-collapse: collapse; background: #fff; width: 100%; max-width: 900px; }
+  th, td { border: 1px solid #ccd; padding: 5px 8px; text-align: left; }
+  th { background: #dde4ef; }
+  .loadBlocker { display: none; position: fixed; inset: 0; background: rgba(255,255,255,.6); align-items: center; justify-content: center; font-size: 20px; z-index: 10; }
+  .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); align-items: center; justify-content: center; z-index: 20; }
+  .modal > div { background: #fff; padding: 20px; border-radius: 8px; }
+  .aviso { background: #fff3cd; border: 1px solid #e0c060; padding: 8px 12px; margin-bottom: 12px; max-width: 900px; }
+</style>
+</head>
+<body>
+<header>KDABRA Checkout — SIMULADOR (dados falsos)
+  <button id="abrir-slc" style="float:right;margin-top:-4px">▶ Abrir SLC PreOp</button></header>
+<main>
+  <div class="aviso">Esta página é uma imitação para testes. Nenhum dado é real e nada é impresso.</div>
+  <div>
+    <button class="itens_type_btn active" data-modo="mercearia">Mercearia</button>
+    <button class="itens_type_btn" data-modo="fresh">Fresh</button>
+  </div>
+  <div class="filtros">
+    <label>Caminhão <select id="truckInput"></select></label>
+    <label>Leva <select id="waveInput"></select></label>
+    <label>Impresso <select id="printedInput"><option value="0">Todos</option><option value="1">Sim</option><option value="2">Não</option></select></label>
+    <label>Itens <input type="checkbox" id="printOrdersToogle" checked></label>
+    <button id="filtrar_busca">Buscar</button>
+    <button id="finalizar_button">Finalizar</button>
+  </div>
+  <table id="toPrint_list">
+    <thead><tr id="cabecalho"></tr></thead>
+    <tbody id="table_body"></tbody>
+  </table>
+</main>
+<div class="loadBlocker">Carregando…</div>
+<div class="modal" id="modal"><div>
+  <p>Confirma a impressão dos pedidos selecionados?</p>
+  <button id="acaoBotaoFinalizar_sim">Sim</button> <button id="acaoBotaoFinalizar_nao">Não</button>
+</div></div>
+<script>
+(() => {
+  const url = new URLSearchParams(location.search);
+  const ATRASO = +(url.get("atraso") || 400);
+  const LEVA_TODOS = url.get("levaTodos") !== "0";
+  const COLUNAS_NOVAS = url.get("colunas") === "novas";
+  const POUCOS = url.get("poucos") === "1";
+
+  const dia = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString("pt-BR"); };
+  const amanha = dia(-1);
+  let seq = 900100;
+  // [caminhão, leva, ...situações] — N = não impresso, P = pendente, número = impresso há N dias
+  const BASE = {
+    mercearia: [
+      ["299", "A", "N", "N", "N", 0], ["299", "H", 0, 0], ["101", "H", "N", 10, "P"], ["5", "A", 3, 3],
+      ["5", "B", "N"], ["R", "C", 8], ["400", "A", "N", "N"], ["402", "C", "N", 0], ["150", "KA", "P"],
+      ["3001", "Z", "N", "N"], ["210", "H", "N"],
+    ],
+    fresh: [["299", "A", "N"], ["7", "A", "N", "N"], ["401", "B", 1], ["60", "B", "P"]],
+  };
+  const DADOS = {};
+  for (const [modo, lista] of Object.entries(BASE)) {
+    DADOS[modo] = [];
+    for (const [cam, leva, ...sits] of lista)
+      sits.forEach((s, i) => DADOS[modo].push({
+        caminhao: cam, leva, rota: "Rota " + (10 + i), pedido: String(seq++),
+        entrega: s === "P" ? "Pedido pendente" : amanha,
+        impressao: s === "N" || s === "P" ? "Não foi impresso" : dia(s),
+      }));
+  }
+  window.__dados = DADOS;
+  window.__impressoes = [];
+  window.__congelar = null;
+
+  const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
+  const TODOS_CAMINHOES = ["299", ...range(100, 124), "R", "H", "D", "K", ...range(1, 60), ...range(150, 154), ...range(180, 184), ...range(200, 210), ...range(300, 310), ...range(400, 405), "3001"];
+  const LEVAS = ["A", "H", "B", "C", "KA", "KB", "NC", "Z"];
+  let modo = "mercearia";
+
+  const $ = (s) => document.querySelector(s);
+  const op = (v, t) => `<option value="${v}">${t}</option>`;
+  function montarFiltros() {
+    const cams = POUCOS ? [...new Set(DADOS[modo].map((p) => p.caminhao)), "1", "2"] : TODOS_CAMINHOES;
+    $("#truckInput").innerHTML = op("", "Selecione") + cams.map((c) => op("c" + c, c)).join("");
+    $("#waveInput").innerHTML = (LEVA_TODOS ? op("0", "Todos") : op("", "Selecione")) + LEVAS.map((l) => op("l" + l, l)).join("");
+  }
+
+  const COLS = COLUNAS_NOVAS
+    ? [["Pedido", "pedido"], ["Data Impressão", "impressao"], ["Caminhão", "nome"], ["Data Entrega", "entrega"], ["Rota", "rota"], ["Volumes", "vol"]]
+    : [["Caminhão", "nome"], ["Rota", "rota"], ["Pedido", "pedido"], ["Data Entrega", "entrega"], ["Data Impressão", "impressao"], ["Volumes", "vol"]];
+  $("#cabecalho").innerHTML = `<th><input type="checkbox" id="check_all"></th>` + COLS.map((c) => `<th>${c[0]}</th>`).join("");
+
+  let ultimaBusca = null;
+  function filtrar(b) {
+    return DADOS[modo].filter((p) =>
+      (b.cam === "" ? false : b.cam === "0" || p.caminhao === b.cam.slice(1)) &&
+      (b.leva === "0" || p.leva === b.leva.slice(1)) &&
+      (b.imp === "0" || (b.imp === "1") === (p.impressao !== "Não foi impresso")));
+  }
+  function desenhar() {
+    const linhas = ultimaBusca ? filtrar(ultimaBusca) : [];
+    $("#table_body").innerHTML = linhas.length
+      ? linhas.map((p) => `<tr><td><input type="checkbox" data-pedido="${p.pedido}"></td>` +
+          COLS.map(([, k]) => `<td>${k === "nome" ? p.caminhao + p.leva : k === "vol" ? 1 : p[k]}</td>`).join("") + `</tr>`).join("")
+      : `<tr><td colspan="${COLS.length + 1}">Nenhum registro encontrado</td></tr>`;
+  }
+  function carregar(fn) {
+    $(".loadBlocker").style.display = "flex";
+    setTimeout(() => { fn(); $(".loadBlocker").style.display = "none"; }, ATRASO);
+  }
+
+  $("#filtrar_busca").onclick = () => {
+    const b = { cam: $("#truckInput").value, leva: $("#waveInput").value, imp: $("#printedInput").value };
+    if (window.__congelar && b.cam === "c" + window.__congelar) return carregar(() => {}); // não redesenha
+    ultimaBusca = b;
+    carregar(desenhar);
+  };
+  $("#finalizar_button").onclick = () => {
+    if (!document.querySelector("#table_body input[data-pedido]:checked")) return alert("Selecione ao menos um pedido");
+    $("#modal").style.display = "flex";
+  };
+  $("#acaoBotaoFinalizar_nao").onclick = () => { $("#modal").style.display = "none"; };
+  $("#acaoBotaoFinalizar_sim").onclick = () => {
+    $("#modal").style.display = "none";
+    const marcados = [...document.querySelectorAll("#table_body input[data-pedido]:checked")].map((x) => x.dataset.pedido);
+    for (const p of DADOS[modo]) if (marcados.includes(p.pedido)) {
+      p.impressao = dia(0);
+      window.__impressoes.push(p.caminhao + p.leva + ":" + p.pedido);
+    }
+    carregar(desenhar);
+  };
+  document.querySelectorAll(".itens_type_btn").forEach((b) => (b.onclick = () => {
+    document.querySelectorAll(".itens_type_btn").forEach((x) => x.classList.toggle("active", x === b));
+    modo = b.dataset.modo;
+    ultimaBusca = null;
+    carregar(() => { montarFiltros(); desenhar(); });
+  }));
+
+  // Abre o SLC PreOp deste repositório (funciona abrindo o arquivo direto no navegador).
+  $("#abrir-slc").onclick = () => {
+    const s = document.createElement("script");
+    s.src = "../../src/mercearia.js?v=" + Date.now();
+    document.body.appendChild(s);
+  };
+
+  montarFiltros();
+  desenhar();
+})();
+</script>
+</body>
+</html>
