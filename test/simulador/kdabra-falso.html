@@ -13,6 +13,8 @@
     ?colunas=novas    → colunas da tabela em outra ordem
     ?atraso=400       → tempo (ms) que cada busca demora
     ?poucos=1         → só os caminhões que têm pedidos (testes mais rápidos)
+    ?paginado=10      → tabela DataTables paginada NO SERVIDOR (só a página atual fica na tela),
+                        como o KDABRA real. Precisa do `npm install` (usa jQuery e DataTables de node_modules).
   No console: window.__congelar = "210" faz a busca do caminhão 210 não atualizar a tabela.
 -->
 <style>
@@ -60,6 +62,8 @@
   <p>Confirma a impressão dos pedidos selecionados?</p>
   <button id="acaoBotaoFinalizar_sim">Sim</button> <button id="acaoBotaoFinalizar_nao">Não</button>
 </div></div>
+<script src="../../node_modules/jquery/dist/jquery.min.js"></script>
+<script src="../../node_modules/datatables.net/js/jquery.dataTables.min.js"></script>
 <script>
 (() => {
   const url = new URLSearchParams(location.search);
@@ -67,6 +71,7 @@
   const LEVA_TODOS = url.get("levaTodos") === "1";
   const COLUNAS_NOVAS = url.get("colunas") === "novas";
   const POUCOS = url.get("poucos") === "1";
+  const PAGINADO = +(url.get("paginado") || 0);
 
   const dia = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString("pt-BR"); };
   const amanha = dia(-1);
@@ -77,6 +82,7 @@
       ["299", "A", "N"], ["299", "AA", "N", "N", "N", 0], ["299", "J", 0, 0], ["101", "HA", "N", 10, "P"], ["5", "A", 3, 3],
       ["5", "B", "N"], ["152", "KB", 8], ["450", "A", "N", "N"], ["150", "KA", "P"],
       ["3001", "Z", "N", "N"], ["205", "A", "N", 0], ["302", "H", "N"],
+      ["40", "A", 0, "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N"], // 13 pedidos: passa de uma página
     ],
     fresh: [["299", "AA", "N"], ["7", "A", "N", "N"], ["41", "B", 1], ["50", "B", "P"]],
   };
@@ -121,13 +127,34 @@
       (b.imp === "0" || (b.imp === "1") === (p.impressao !== "Não foi impresso")));
   }
   function desenhar() {
+    if (dt) return dt.ajax.reload();
     const linhas = ultimaBusca ? filtrar(ultimaBusca) : [];
     $("#table_body").innerHTML = linhas.length
       ? linhas.map((p) => `<tr><td><input type="checkbox" data-pedido="${p.pedido}"></td>` +
           COLS.map(([, k]) => `<td>${k === "nome" ? p.caminhao + p.leva : k === "vol" ? 1 : p[k]}</td>`).join("") + `</tr>`).join("")
       : `<tr><td colspan="${COLS.length + 1}">Nenhum registro encontrado</td></tr>`;
   }
+  // Modo paginado: DataTables com serverSide, igual ao KDABRA (cada página vem do "servidor").
+  const linhaArray = (p) => [`<input type="checkbox" data-pedido="${p.pedido}">`, ...COLS.map(([, k]) => (k === "nome" ? p.caminhao + p.leva : k === "vol" ? 1 : p[k]))];
+  const dt = PAGINADO && window.jQuery && jQuery.fn.DataTable
+    ? jQuery("#toPrint_list").DataTable({
+        serverSide: true, searching: false, ordering: false, lengthChange: false, pageLength: PAGINADO, deferLoading: 0,
+        columns: [{}, ...COLS.map(() => ({}))],
+        ajax: (d, cb) => {
+          $(".loadBlocker").style.display = "flex";
+          setTimeout(() => {
+            const linhas = ultimaBusca ? filtrar(ultimaBusca) : [];
+            const pagina = d.length < 0 ? linhas.slice(d.start) : linhas.slice(d.start, d.start + d.length);
+            $(".loadBlocker").style.display = "none";
+            cb({ draw: d.draw, recordsTotal: linhas.length, recordsFiltered: linhas.length, data: pagina.map(linhaArray) });
+          }, ATRASO);
+        },
+      })
+    : null;
+  window.__paginado = !!dt;
+
   function carregar(fn) {
+    if (dt && fn === desenhar) return dt.ajax.reload();
     $(".loadBlocker").style.display = "flex";
     setTimeout(() => { fn(); $(".loadBlocker").style.display = "none"; }, ATRASO);
   }

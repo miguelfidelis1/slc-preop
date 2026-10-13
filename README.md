@@ -30,7 +30,7 @@ Detalhes em [`docs/regras-operacionais.md`](docs/regras-operacionais.md).
 | Filtro | `Impresso = Todos` |
 | Imprime | `Não foi impresso`, ou `Data Impressão` com **7 dias ou mais** |
 | Ignora | `Pedido pendente`, impresso há menos de 7 dias, data inválida |
-| Ordem | 299A → 299H → 100HA–124HA → demais 299 (B…Z, depois AA…AI) → A → B → C |
+| Ordem | 299A → 299H → demais 299 (B…Z, depois AA…AI) → 100HA–124HA → A → B → C |
 | Levas por caminhão | só as da faixa do caminhão (veja as regras); caminhão fora das faixas busca todas as levas |
 | Caminhões novos | entram no fim do grupo da leva deles (A/H/KA → A, B/KB/NC → B, C → C) |
 | Fora da fila | caminhões **3000 em diante** (nem são lidos) |

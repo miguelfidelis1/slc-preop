@@ -34,6 +34,9 @@ const SLC_PREOP_MODO = "mercearia";
     // Depois de imprimir, busca o caminhão de novo para conferir se o KDABRA
     // registrou a impressão. Pedidos não confirmados ficam em vermelho no painel.
     conferirAposImprimir: true,
+    // A tabela do KDABRA é paginada no servidor (só a página atual fica na tela).
+    // Depois de cada busca o script pede páginas deste tamanho, para ver todos os pedidos.
+    linhasPorPagina: 1000,
     // true = marca e confere os pedidos, mas NÃO clica em Finalizar (para testar).
     simulacao: false,
     // Como descobrir os caminhões:
@@ -100,7 +103,7 @@ const SLC_PREOP_MODO = "mercearia";
   const ajustes = typeof window !== "undefined" && window.SLC_PREOP_CONFIG;
   if (ajustes) {
     Object.assign(CONFIG.tempos, ajustes.tempos || {});
-    ["reprintDias", "conferirAposImprimir", "varredura", "simulacao", "levasPorCaminhao"].forEach((k) => {
+    ["reprintDias", "conferirAposImprimir", "varredura", "simulacao", "levasPorCaminhao", "linhasPorPagina"].forEach((k) => {
       if (k in ajustes) CONFIG[k] = ajustes[k];
     });
   }
@@ -112,8 +115,8 @@ const SLC_PREOP_MODO = "mercearia";
   const PRIORIDADES = [
     { grupo: "MAX", tipo: "299A", nomes: ["299A"] },
     { grupo: "MAX", tipo: "299H", nomes: ["299H"] },
-    { grupo: "MAX", tipo: "100HA–124HA", se: (c) => ["H", "HA"].includes(c.leva) && entre(c.num, 100, 124) },
     { grupo: "MAX", tipo: "299 demais (B…Z, depois AA…AI)", se: (c) => c.num === "299" },
+    { grupo: "MAX", tipo: "100HA–124HA", se: (c) => ["H", "HA"].includes(c.leva) && entre(c.num, 100, 124) },
     { grupo: "A", tipo: "RA / RH / HA", nomes: ["RA", "RH", "HA"] },
     { grupo: "A", tipo: "150–179 KA", se: (c) => c.leva === "KA" && entre(c.num, 150, 179) },
     { grupo: "A", tipo: "Original A (1–99)", se: (c) => c.leva === "A" && entre(c.num, 1, 99) },
@@ -385,19 +388,51 @@ const SLC_PREOP_MODO = "mercearia";
     return false;
   }
 
-  function linhasTabela() {
+  function dataTable() {
     try {
       const jq = window.jQuery;
-      if (jq && jq.fn.DataTable && jq.fn.DataTable.isDataTable(S.tabela))
-        return jq(S.tabela).DataTable().rows({ search: "applied" }).nodes().toArray();
+      if (jq && jq.fn.DataTable && jq.fn.DataTable.isDataTable(S.tabela)) return jq(S.tabela).DataTable();
     } catch (e) {}
+    return null;
+  }
+
+  function linhasTabela() {
+    const dt = dataTable();
+    if (dt) {
+      try {
+        return dt.rows({ search: "applied" }).nodes().toArray();
+      } catch (e) {}
+    }
     return [...document.querySelectorAll(S.linhas)];
+  }
+
+  // Com paginação no servidor, só a página atual existe na tela: pedidos das outras
+  // páginas não seriam vistos nem impressos. Aumenta a página para caber tudo.
+  let avisouPaginacao = false;
+  async function mostrarTodasAsLinhas() {
+    const dt = dataTable();
+    if (!dt) return;
+    const info = dt.page.info();
+    if (info.pages <= 1 || info.length < 0) return;
+    const antes = assinatura();
+    const obs = observarTabela();
+    dt.page.len(Math.max(CONFIG.linhasPorPagina, info.recordsDisplay)).draw();
+    await esperarTabela(antes, obs);
+    await sleep(T.estabilizar);
+    const depois = dt.page.info();
+    if (depois.pages > 1)
+      log(`ATENÇÃO: a tabela continua paginada (${depois.end - depois.start} de ${depois.recordsDisplay} pedidos na tela). Os demais ficam para a próxima passada.`);
+    else if (!avisouPaginacao) {
+      avisouPaginacao = true;
+      log(`Tabela paginada (${info.length} por página): passando a mostrar todos os pedidos de uma vez.`);
+    }
   }
 
   const cabecalhos = () => [...document.querySelectorAll(S.tabela + " thead th")].map((th) => th.textContent || "");
 
   function lerTabela() {
-    const col = detectarColunas(cabecalhos());
+    let col = detectarColunas(cabecalhos());
+    if (col.fonte === "misto") col = detectarColunas([]); // cabeçalhos incompletos: usa as posições da v1
     const hoje = new Date();
     const pedidos = [];
     for (const row of linhasTabela()) {
@@ -509,6 +544,7 @@ const SLC_PREOP_MODO = "mercearia";
     E.buscar.click();
     const r = await esperarTabela(antes, obs);
     await sleep(T.estabilizar);
+    if (r.ok) await mostrarTodasAsLinhas();
     return { ok: r.ok, mudou: r.mudou, pedidos: lerTabela() };
   }
 
@@ -643,6 +679,11 @@ const SLC_PREOP_MODO = "mercearia";
 
   const semRow = ({ row, ...p }) => p;
 
+  const logLeitura = (g) => {
+    const r = g.resumo;
+    log(`${g.nome}: ${r.total} pedido(s) — ${r.naoImpresso} não impresso(s), ${r.reimprimir} 7d+, ${r.impresso} impresso(s), ${r.pendente} pendente(s)` + (r.invalido ? `, ${r.invalido} com data inválida` : ""));
+  };
+
   function atualizarPedidos(g, pedidos) {
     g.pedidos = new Map(pedidos.map((p) => [chave(p.pedido), semRow(p)]));
     g.resumo = resumir(g.pedidos.values());
@@ -750,6 +791,7 @@ const SLC_PREOP_MODO = "mercearia";
           const g = grupoPara(chave(nome), { ...info, nome, consulta: c });
           r.pedidos.forEach((p) => g.valoresColuna.add(chave(p.caminhao)));
           atualizarPedidos(g, r.pedidos);
+          logLeitura(g);
         } else {
           const porNome = new Map();
           for (const p of r.pedidos) {
@@ -767,6 +809,7 @@ const SLC_PREOP_MODO = "mercearia";
             lista.forEach((p) => juntos.set(chave(p.pedido), semRow(p)));
             g.pedidos = juntos;
             g.resumo = resumir(juntos.values());
+            logLeitura(g);
           }
         }
       }
@@ -968,6 +1011,7 @@ const SLC_PREOP_MODO = "mercearia";
       cabecalho: cabecalhos().map((t) => t.trim()),
       colunasDetectadas: detectarColunas(cabecalhos()),
       linhasNaTabela: linhasTabela().length,
+      paginacao: dataTable() ? { ...dataTable().page.info(), servidor: !!dataTable().settings()[0].oFeatures.bServerSide } : null,
       amostra: linhasTabela().slice(0, 5).map((tr) => [...tr.children].map((td) => (caixaDaLinha(tr) && td.contains(caixaDaLinha(tr)) ? "[checkbox] " : "") + m(td.textContent))),
       leituraUsada: estado.estrategia,
     };

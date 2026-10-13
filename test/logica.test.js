@@ -45,9 +45,9 @@ const grupo = (nome) => {
 };
 const ordem = (nomes) => L.ordenarGrupos(nomes.map(grupo)).map((g) => g.nome);
 
-test("ordem de prioridade da v1 é mantida", () => {
+test("ordem de prioridade: 299A, 299H, demais 299, 100H–124H, depois A, B, C", () => {
   const v1 = [
-    "299A", "299H", "100H", "101H", "124H", "299B", "299C",
+    "299A", "299H", "299B", "299C", "100H", "101H", "124H",
     "RA", "RH", "HA", "150KA", "154KA", "1A", "2A", "60A", "200A", "200H", "201A", "210H", "300A", "310H",
     "RB", "HB", "150KB", "1B", "60B", "100B", "180NC", "184NC",
     "RC", "DC", "200C", "KC", "100C",
@@ -127,7 +127,7 @@ test("só busca as levas da faixa do caminhão (sem 1AA, 2AH…)", () => {
 
 test("nomes de hoje (100HA, 299AA, 152KB) entram na prioridade certa", () => {
   assert.deepEqual(ordem(["5B", "152KB", "302H", "205A", "299AA", "299J", "299H", "101HA", "1A", "299B", "150KA", "299A", "299AB", "299Z"]), [
-    "299A", "299H", "101HA", "299B", "299J", "299Z", "299AA", "299AB", "150KA", "1A", "205A", "302H", "152KB", "5B",
+    "299A", "299H", "299B", "299J", "299Z", "299AA", "299AB", "101HA", "150KA", "1A", "205A", "302H", "152KB", "5B",
   ]);
   assert.equal(grupo("101HA").prioridade.grupo, "MAX");
   assert.equal(grupo("299AA").prioridade.grupo, "MAX");
