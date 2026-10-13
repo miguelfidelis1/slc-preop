@@ -147,18 +147,32 @@ test("capa: uma por caminhão, na ordem de impressão, com os pedidos impressos"
   ]);
   assert.deepEqual(capas.map((c) => c.caminhao), ["299A", "1A"]);
   assert.deepEqual(capas[0].linhas.map((l) => [l.rota, l.pedido]), [["60001", "P1"], ["60002", "P3"]]);
+});
 
-  const html = L.htmlCapas(capas);
-  assert.equal((html.match(/<section class="capa">/g) || []).length, 2);
-  assert.match(html, /CHECK CAMINHÃO 299A/);
+test("capa: igual à Planilha1 da CHECK CAMINHAO FRESH NOVO (49 linhas, 27 de pedidos, logo)", () => {
+  const html = L.htmlCapas(L.montarCapas([
+    { caminhao: "299A", rota: "6.0299.001-0001", pedido: "P1" },
+    { caminhao: "299A", rota: "6.0299.001-0002", pedido: "P3" },
+  ]));
+  assert.equal((html.match(/<section class="pagina">/g) || []).length, 1);
+  assert.equal((html.match(/<tr /g) || []).length, 49, "linhas 1 a 49 da planilha");
+  assert.equal((html.match(/<td class="g m">299A<\/td>/g) || []).length, 2);
+  assert.match(html, /CHECK CAMINHÃO 299A<\/td><td class="c">299A<\/td>/, "título em C10:D10 e o caminhão em E10");
+  assert.match(html, /CAMINHÃO<\/span>.*ROTA<\/span>.*NÚMERO PEDIDO<\/span>.*CHECK<\/span>.*MAPEADO\?<\/span>/s);
+  assert.match(html, /_______:_______/);
   assert.match(html, /FISCAL RESPONSÁVEL/);
   assert.match(html, /HORÁRIO FIM/);
-  // Completa até 30 linhas, como a planilha (2 pedidos + 28 vazias no 299A).
-  const folha299 = html.split('<section class="capa">')[1];
-  assert.equal((folha299.match(/<tr>/g) || []).length, 1 + 30);
+  assert.match(html, /<img class="logo" src="data:image\/png;base64,/);
+  // Mais de 27 pedidos: a tabela cresce em vez de cortar.
+  const muitos = Array.from({ length: 30 }, (_, i) => ({ caminhao: "7A", rota: "6.0007.007-" + i, pedido: "P" + i }));
+  assert.equal((L.htmlCapas(L.montarCapas(muitos)).match(/<tr /g) || []).length, 52);
 });
 
 test("capa: escapa HTML vindo da tela", () => {
   const html = L.htmlCapas(L.montarCapas([{ caminhao: "<b>1A</b>", rota: "x", pedido: "<img>" }]));
   assert.ok(!html.includes("<img>") && html.includes("&lt;img&gt;"));
+});
+
+test("capa: cópia para a Planilha2 da planilha (Caminhão, Rota, Pedido)", () => {
+  assert.equal(L.tsvPlanilhaCapa([{ caminhao: "1A", rota: "6.0001.001-0645", pedido: "P1", entrega: "x", impressao: "y" }]), "1A\t6.0001.001-0645\tP1");
 });

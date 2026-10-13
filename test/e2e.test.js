@@ -137,12 +137,14 @@ test("favorito Fresh imprime no modo Fresh", async () => {
   const capas = () =>
     page.evaluate(() => {
       const d = document.getElementById("slc-preop-capas").contentDocument;
-      return [...d.querySelectorAll(".capa")].map((c) => ({
-        titulo: c.querySelector("h1").textContent,
-        linhas: [...c.querySelectorAll("tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent.trim())).filter((l) => l[0]),
+      return [...d.querySelectorAll(".pagina")].map((c) => ({
+        titulo: c.querySelector(".titulo").textContent,
+        linhas: [...c.querySelectorAll("tr")]
+          .map((tr) => [...tr.querySelectorAll("td.g")].map((td) => td.textContent.trim()))
+          .filter((l) => l.length && l[0]),
       }));
     });
-  await page.waitForFunction(() => document.getElementById("slc-preop-capas")?.contentDocument?.querySelector(".capa"));
+  await page.waitForFunction(() => document.getElementById("slc-preop-capas")?.contentDocument?.querySelector(".pagina"));
   const lista = await capas();
   assert.deepEqual(lista.map((c) => c.titulo), ["CHECK CAMINHÃO 299AA", "CHECK CAMINHÃO 7A"]);
   assert.equal(lista[1].linhas.length, 2);

@@ -72,7 +72,9 @@ No fim de cada execução do Fresh, o painel imprime uma capa por caminhão que 
 | NÚMERO PEDIDO | número do pedido |
 | CHECK / MAPEADO? | em branco, para marcar à mão |
 
-A tabela tem 30 linhas, como na planilha. No rodapé ficam Fiscal responsável e Horário fim.
+O layout é o da Planilha1 da CHECK CAMINHAO FRESH NOVO, célula por célula: logo, "CHECK CAMINHÃO X" com o caminhão repetido ao lado, cabeçalho preto, tabela de 27 linhas (cresce se o caminhão tiver mais pedidos), linha para assinatura do fiscal, horário fim e a moldura em volta da folha, centralizada no A4.
+
+Para usar a própria planilha em vez da capa automática: botão **Copiar para a planilha da capa** → colar em A2 da Planilha2 → Ctrl+P na Planilha1.
 
 ## Fora da fila
 

@@ -13,7 +13,9 @@ Painel em JavaScript para a pré-operação do **KDABRA Checkout**, aberto por u
 3. Confere se o KDABRA registrou cada impressão.
 4. Copia os pedidos impressos para a **Impressos V2**. No final aparece o aviso: é só abrir a planilha e apertar **Ctrl+V**.
 
-No **Fresh**, no fim da execução abre também a impressão das **capas CHECK CAMINHÃO**: uma folha por caminhão impresso, com os pedidos que acabaram de sair (caminhão, rota no formato 60645, nº do pedido, check, mapeado?, fiscal responsável e horário fim). É só escolher a impressora e clicar em Imprimir. Substitui a planilha CHECK CAMINHAO FRESH NOVO, sem precisar copiar e colar. O botão **🖨️ Imprimir capas** imprime de novo, se precisar.
+No **Fresh**, no fim da execução abre também a impressão das **capas CHECK CAMINHÃO**: uma folha por caminhão impresso, com os pedidos que acabaram de sair. A capa reproduz a Planilha1 da **CHECK CAMINHAO FRESH NOVO** célula por célula (logo, título, tabela de 27 linhas, moldura, fiscal responsável e horário fim), com a rota no formato da "rota fórmula" (60645). É só escolher a impressora e clicar em Imprimir. O botão **🖨️ Imprimir capas** imprime de novo, se precisar.
+
+Quem preferir usar a própria planilha: em *Caminhões e mais opções*, **📋 Copiar para a planilha da capa** copia Caminhão, Rota e Nº pedido; cole em A2 da Planilha2 e dê Ctrl+P na Planilha1, como antes.
 
 <img src="docs/img/capa.png" alt="Exemplo de capa CHECK CAMINHÃO (dados inventados)" width="320">
 
@@ -83,7 +85,7 @@ Quase tudo fica no bloco `CONFIG` no topo de `src/slc-preop.js`:
 
 - `seletores`: IDs dos filtros, da tabela e dos botões;
 - `colunas`: nomes dos cabeçalhos da tabela (as colunas são achadas pelo nome, não pela posição);
-- `capa`: em quais modos imprime a capa (hoje só Fresh), se abre sozinha no fim e quantas linhas a tabela tem;
+- `capa`: em quais modos imprime a capa (hoje só Fresh), se abre sozinha no fim, quantas linhas a tabela tem e a `escala` para ajuste fino do tamanho impresso;
 - `levasPorCaminhao`: quais levas cada faixa de caminhão usa (se surgir um caminhão novo numa faixa nova, é aqui que se adiciona);
 - `PRIORIDADES` e `foraDaFila`: ordem de impressão;
 - `tempos`: esperas;
