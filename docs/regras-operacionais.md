@@ -50,4 +50,4 @@ Dentro de cada regra, a ordem é numérica (1A, 2A, …, 60A).
 Caminhões 3000 em diante (ex.: 3000Z)
 ```
 
-Aparecem no painel para conferência, mas não vêm selecionados. Dá para marcar na mão se precisar.
+Aparecem na lista do painel para conferência, mas não são impressos.

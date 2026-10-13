@@ -7,10 +7,10 @@ const SLC_PREOP_MODO = "fresh";
 /*
  * SLC PreOp KDABRA — v2
  *
- * Painel para o KDABRA Checkout que:
- *   1. mapeia TODOS os caminhões (lidos direto da tela, sem lista fixa);
- *   2. mostra quais estão impressos, quais faltam e quais têm reimpressão 7d+;
- *   3. imprime os caminhões escolhidos na ordem de prioridade;
+ * Clicou no favorito, ele faz tudo sozinho (como a v1):
+ *   1. lê TODOS os caminhões do filtro da tela (sem lista fixa);
+ *   2. imprime, na ordem de prioridade, os pedidos não impressos ou impressos há 7+ dias;
+ *   3. confere se o KDABRA registrou a impressão;
  *   4. copia os pedidos impressos em TSV para colar na planilha Impressos V2.
  *
  * Este é o arquivo-fonte único. src/mercearia.js e src/fresh.js são gerados
@@ -34,6 +34,8 @@ const SLC_PREOP_MODO = "fresh";
     // Depois de imprimir, busca o caminhão de novo para conferir se o KDABRA
     // registrou a impressão. Pedidos não confirmados ficam em vermelho no painel.
     conferirAposImprimir: true,
+    // true = marca e confere os pedidos, mas NÃO clica em Finalizar (para testar).
+    simulacao: false,
     // Como descobrir os caminhões:
     //   "auto"          → usa Leva = Todos se existir (1 busca por caminhão),
     //                     senão busca cada combinação caminhão × leva.
@@ -84,7 +86,7 @@ const SLC_PREOP_MODO = "fresh";
   const ajustes = typeof window !== "undefined" && window.SLC_PREOP_CONFIG;
   if (ajustes) {
     Object.assign(CONFIG.tempos, ajustes.tempos || {});
-    ["reprintDias", "conferirAposImprimir", "varredura"].forEach((k) => {
+    ["reprintDias", "conferirAposImprimir", "varredura", "simulacao"].forEach((k) => {
       if (k in ajustes) CONFIG[k] = ajustes[k];
     });
   }
@@ -540,42 +542,38 @@ const SLC_PREOP_MODO = "fresh";
     modo: CONFIG.modos[MODO_INICIAL] ? MODO_INICIAL : "mercearia",
     rodando: null, // "mapear" | "imprimir"
     parar: false,
-    simulacao: false,
     grupos: new Map(),
     estrategia: null,
-    mapeadoEm: null,
     registros: [], // pedidos impressos nesta execução (vão para o TSV)
-    execucao: null, // { modo, quando }
+    anterior: null, // última execução com pedidos, guardada no navegador
     impressosNaExecucao: new Set(),
-    filtro: "todos",
-    busca: "",
     abertos: new Set(),
     progresso: { feito: 0, total: 0, inicio: 0 },
-    status: "Pronto. Clique em “Mapear caminhões”.",
+    status: "",
     logs: [],
   };
 
+  const modoNome = () => CONFIG.modos[estado.modo].nome;
+  const hora = (iso) => new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+  // Só grava quando a execução imprimiu algo, para não apagar a anterior à toa.
   function salvarExecucao() {
+    if (!estado.registros.length) return;
+    estado.anterior = { modo: estado.modo, quando: new Date().toISOString(), registros: estado.registros };
     try {
-      localStorage.setItem(CHAVE_STORAGE, JSON.stringify({ ...estado.execucao, registros: estado.registros }));
+      localStorage.setItem(CHAVE_STORAGE, JSON.stringify(estado.anterior));
     } catch (e) {}
   }
 
   function restaurarExecucao() {
     try {
       const x = JSON.parse(localStorage.getItem(CHAVE_STORAGE) || "null");
-      if (!x || !Array.isArray(x.registros) || !x.registros.length) return;
-      if (dataBR(new Date(x.quando)) !== dataBR(new Date())) return;
-      estado.registros = x.registros;
-      estado.execucao = { modo: x.modo, quando: x.quando };
-      const hora = new Date(x.quando).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-      estado.status = `Última impressão (${hora}, ${CONFIG.modos[x.modo] ? CONFIG.modos[x.modo].nome : x.modo}) tem ${x.registros.length} pedidos guardados — use “Copiar para Impressos V2”.`;
+      if (x && Array.isArray(x.registros) && x.registros.length && dataBR(new Date(x.quando)) === dataBR(new Date())) estado.anterior = x;
     } catch (e) {}
   }
 
   function log(msg) {
-    const hora = new Date().toLocaleTimeString("pt-BR");
-    estado.logs.push(hora + "  " + msg);
+    estado.logs.push(new Date().toLocaleTimeString("pt-BR") + "  " + msg);
     if (estado.logs.length > 800) estado.logs.shift();
     console.log("[SLC PreOp] " + msg);
     agendarRender();
@@ -603,7 +601,6 @@ const SLC_PREOP_MODO = "fresh";
         valoresColuna: new Set(),
         pedidos: new Map(),
         resumo: resumir([]),
-        selecionado: false,
         erro: null,
         impressosAgora: 0,
         simulados: 0,
@@ -622,265 +619,238 @@ const SLC_PREOP_MODO = "fresh";
   }
 
   // Na impressão, só considera linhas cuja coluna Caminhão bate com o que foi
-  // visto no mapeamento — protege contra a tabela de outro caminhão.
+  // visto na leitura — protege contra a tabela de outro caminhão.
   const doGrupo = (g, pedidos) => (g.valoresColuna.size ? pedidos.filter((p) => g.valoresColuna.has(chave(p.caminhao))) : pedidos);
 
-  function iniciar(tipo, total) {
+  function fase(tipo, total) {
     estado.rodando = tipo;
-    estado.parar = false;
     estado.progresso = { feito: 0, total, inicio: Date.now() };
     agendarRender();
   }
 
-  function terminar(msg) {
+  // ============================================================
+  // EXECUÇÃO — clicou no favorito, imprime tudo e copia
+  // ============================================================
+  async function executar() {
+    if (estado.rodando) return;
+    estado.parar = false;
+    estado.grupos = new Map();
+    estado.abertos.clear();
+    estado.registros = [];
+    estado.impressosNaExecucao = new Set();
+    fase("mapear", 0);
+    try {
+      const E = elementos();
+      if (E.faltando.length) throw new Error("Não achei na tela: " + E.faltando.join(", ") + ". Confere se está no Checkout.");
+      await lerCaminhoes();
+      if (estado.parar) return fim("⏹️ Parado antes de imprimir. Nada foi impresso.");
+      await imprimirTudo();
+    } catch (e) {
+      fim("Erro: " + e.message);
+      alert("SLC PreOp: " + e.message);
+    }
+  }
+
+  function fim(msg) {
     estado.rodando = null;
     estado.parar = false;
     setStatus(msg);
     log(msg);
   }
 
-  // ============================================================
-  // MAPEAR — descobre todos os caminhões e a situação de cada um
-  // ============================================================
-  async function mapear() {
-    if (estado.rodando) return;
-    iniciar("mapear", 0);
-    try {
-      setStatus("Ativando " + CONFIG.modos[estado.modo].nome + "…");
-      await ativarModo(estado.modo);
-      const E = elementos();
-      if (E.faltando.length) throw new Error("Não achei na tela: " + E.faltando.join(", ") + ". Confere se está no Checkout (ou use Diagnóstico).");
+  // 1ª parte: descobre todos os caminhões e a situação de cada um (só leitura).
+  async function lerCaminhoes() {
+    setStatus("Ativando " + modoNome() + "…");
+    await ativarModo(estado.modo);
+    const E = elementos();
+    const cams = lerOpcoes(E.caminhao);
+    const levas = lerOpcoes(E.leva);
+    let estrategia = CONFIG.varredura;
+    if (estrategia === "auto") estrategia = levas.todos ? "porCaminhao" : "porCombinacao";
+    if (estrategia === "porCaminhao" && !levas.todos) estrategia = "porCombinacao";
+    if (estrategia === "tudo" && !(cams.todos && levas.todos)) estrategia = levas.todos ? "porCaminhao" : "porCombinacao";
+    estado.estrategia = estrategia;
+    const info = { nums: cams.lista.map((o) => o.text), levas: levas.lista.map((o) => o.text) };
+    log(`${modoNome()}: ${cams.lista.length} caminhões e ${levas.lista.length} levas no filtro (leitura: ${estrategia}).`);
 
-      const cams = lerOpcoes(E.caminhao);
-      const levas = lerOpcoes(E.leva);
-      let estrategia = CONFIG.varredura;
-      if (estrategia === "auto") estrategia = levas.todos ? "porCaminhao" : "porCombinacao";
-      if (estrategia === "porCaminhao" && !levas.todos) estrategia = "porCombinacao";
-      if (estrategia === "tudo" && !(cams.todos && levas.todos)) estrategia = levas.todos ? "porCaminhao" : "porCombinacao";
+    const consultas = [];
+    if (estrategia === "tudo") consultas.push({ caminhao: cams.todos, leva: levas.todos });
+    else if (estrategia === "porCaminhao") cams.lista.forEach((c) => consultas.push({ caminhao: c, leva: levas.todos }));
+    else cams.lista.forEach((c) => consultas.push({ caminhao: c, leva: null })); // levas expandidas abaixo
+    estado.progresso.total = consultas.length;
 
-      const info = { nums: cams.lista.map((o) => o.text), levas: levas.lista.map((o) => o.text) };
-      estado.grupos = new Map();
-      estado.abertos.clear();
-      estado.estrategia = estrategia;
-      log(`Mapeando ${CONFIG.modos[estado.modo].nome}: ${cams.lista.length} caminhões e ${levas.lista.length} levas no filtro (estratégia: ${estrategia}).`);
+    let ultimaId = null;
+    for (const base of consultas) {
+      if (estado.parar) break;
+      const subconsultas = [];
+      if (estrategia === "porCombinacao") {
+        // Lê as levas depois de escolher o caminhão (a lista pode ser filtrada pelo sistema).
+        selecionar(E.caminhao, base.caminhao.value);
+        await sleep(T.aposSelecionar + T.intervalo);
+        lerOpcoes(elementos().leva).lista.forEach((l) => subconsultas.push({ caminhao: base.caminhao, leva: l }));
+      } else subconsultas.push(base);
 
-      const consultas = [];
-      if (estrategia === "tudo") consultas.push({ caminhao: cams.todos, leva: levas.todos });
-      else if (estrategia === "porCaminhao") cams.lista.forEach((c) => consultas.push({ caminhao: c, leva: levas.todos }));
-      else cams.lista.forEach((c) => consultas.push({ caminhao: c, leva: null })); // levas expandidas abaixo
-
-      estado.progresso.total = consultas.length;
-      let ultimaId = null;
-      for (const base of consultas) {
+      for (const c of subconsultas) {
         if (estado.parar) break;
-        const subconsultas = [];
+        const rotulo = estrategia === "porCombinacao" ? c.caminhao.text + c.leva.text : c.caminhao.text;
+        setStatus(`Lendo caminhões: ${rotulo}`);
+        let r = await buscar(c);
+        const id = idConsulta(c);
+        if (r.ok && !r.mudou && r.pedidos.length && ultimaId && ultimaId !== id) {
+          log(`${rotulo}: tabela não mudou, buscando de novo.`);
+          r = await buscar(c);
+        }
+        ultimaId = id;
+        if (!r.ok) {
+          log(`${rotulo}: o KDABRA demorou demais para responder — pulado.`);
+          continue;
+        }
         if (estrategia === "porCombinacao") {
-          // Lê as levas depois de escolher o caminhão (a lista pode ser filtrada pelo sistema).
-          selecionar(E.caminhao, base.caminhao.value);
-          await sleep(T.aposSelecionar + T.intervalo);
-          lerOpcoes(elementos().leva).lista.forEach((l) => subconsultas.push({ caminhao: base.caminhao, leva: l }));
-        } else subconsultas.push(base);
-
-        for (const c of subconsultas) {
-          if (estado.parar) break;
-          const rotulo = estrategia === "porCombinacao" ? c.caminhao.text + c.leva.text : c.caminhao.text;
-          setStatus(`Mapeando ${rotulo}…`);
-          let r = await buscar(c);
-          const id = idConsulta(c);
-          if (r.ok && !r.mudou && r.pedidos.length && ultimaId && ultimaId !== id) {
-            log(`${rotulo}: tabela não mudou, buscando de novo.`);
-            r = await buscar(c);
-          }
-          ultimaId = id;
-          if (!r.ok) {
-            log(`${rotulo}: o KDABRA demorou demais para responder — pulado.`);
+          if (!r.pedidos.length) continue;
+          if (!r.mudou) {
+            log(`${rotulo}: tabela não atualizou — pulado para não misturar caminhões.`);
             continue;
           }
-          if (estrategia === "porCombinacao") {
-            if (!r.mudou && r.pedidos.length) {
-              log(`${rotulo}: tabela não atualizou — pulado para não misturar caminhões.`);
-              continue;
-            }
-            if (!r.pedidos.length) continue;
-            const g = grupoPara(chave(c.caminhao.text + c.leva.text), { ...info, nome: c.caminhao.text + c.leva.text, consulta: c });
-            r.pedidos.forEach((p) => g.valoresColuna.add(chave(p.caminhao)));
-            atualizarPedidos(g, r.pedidos);
-          } else {
-            const porNome = new Map();
-            for (const p of r.pedidos) {
-              const nome = p.caminhao || c.caminhao.text;
-              if (!porNome.has(chave(nome))) porNome.set(chave(nome), { nome, lista: [] });
-              porNome.get(chave(nome)).lista.push(p);
-            }
-            for (const [id2, { nome, lista }] of porNome) {
-              const ident = identificar(nome, info.nums, info.levas);
-              const camOp = cams.lista.find((o) => o.key === ident.num) || c.caminhao;
-              const levaOp = levas.lista.find((o) => o.key === ident.leva);
-              const consulta = levaOp && camOp ? { caminhao: camOp, leva: levaOp } : c;
-              const g = grupoPara(id2, { ...info, nome, consulta });
-              g.valoresColuna.add(id2);
-              const juntos = new Map(g.pedidos);
-              lista.forEach((p) => juntos.set(chave(p.pedido), semRow(p)));
-              g.pedidos = juntos;
-              g.resumo = resumir(juntos.values());
-            }
+          const nome = c.caminhao.text + c.leva.text;
+          const g = grupoPara(chave(nome), { ...info, nome, consulta: c });
+          r.pedidos.forEach((p) => g.valoresColuna.add(chave(p.caminhao)));
+          atualizarPedidos(g, r.pedidos);
+        } else {
+          const porNome = new Map();
+          for (const p of r.pedidos) {
+            const nome = p.caminhao || c.caminhao.text;
+            if (!porNome.has(chave(nome))) porNome.set(chave(nome), { nome, lista: [] });
+            porNome.get(chave(nome)).lista.push(p);
+          }
+          for (const [id2, { nome, lista }] of porNome) {
+            const ident = identificar(nome, info.nums, info.levas);
+            const camOp = cams.lista.find((o) => o.key === ident.num) || c.caminhao;
+            const levaOp = levas.lista.find((o) => o.key === ident.leva);
+            const g = grupoPara(id2, { ...info, nome, consulta: levaOp ? { caminhao: camOp, leva: levaOp } : c });
+            g.valoresColuna.add(id2);
+            const juntos = new Map(g.pedidos);
+            lista.forEach((p) => juntos.set(chave(p.pedido), semRow(p)));
+            g.pedidos = juntos;
+            g.resumo = resumir(juntos.values());
           }
         }
+      }
+      estado.progresso.feito++;
+      agendarRender();
+    }
+    const lista = [...estado.grupos.values()];
+    log(`Leitura concluída: ${lista.length} caminhões com pedidos, ${lista.filter((g) => g.resumo.aImprimir && !g.fora).length} com pedidos a imprimir.`);
+  }
+
+  // 2ª parte: imprime, na ordem de prioridade, todo caminhão com pedido a imprimir.
+  async function imprimirTudo() {
+    const sim = CONFIG.simulacao;
+    const alvo = ordenarGrupos([...estado.grupos.values()]).filter((g) => g.resumo.aImprimir > 0 && !g.fora);
+    if (!alvo.length) {
+      fim("✅ Finalizado. Nenhum pedido para imprimir.");
+      alert(`✅ Finalizado. Modo: ${modoNome()}. Nenhum pedido imprimível encontrado.`);
+      return;
+    }
+    fase("imprimir", alvo.length);
+    let simulados = 0;
+    let naoConfirmados = 0;
+    let ultimaId = null;
+    for (const g of alvo) {
+      if (estado.parar) break;
+      setStatus(`${sim ? "Simulando" : "Imprimindo"} ${g.nome} (${g.prioridade.grupo} · ${g.prioridade.tipo})`);
+      try {
+        const r = await buscar(g.consulta);
+        const id = idConsulta(g.consulta);
+        if (!r.ok) throw new Error("o KDABRA demorou demais para responder");
+        if (!r.mudou && r.pedidos.length && ultimaId && ultimaId !== id)
+          throw new Error("a tabela não atualizou depois da busca (pode ser a do caminhão anterior)");
+        ultimaId = id;
+
+        const linhas = doGrupo(g, r.pedidos);
+        if (r.pedidos.length && !linhas.length) throw new Error("a tabela mostrou pedidos de outro caminhão");
+        atualizarPedidos(g, linhas);
+        const imprimiveis = linhas.filter((p) => IMPRIMIVEL.includes(p.classe) && !estado.impressosNaExecucao.has(chave(p.pedido)));
+        if (!imprimiveis.length) {
+          log(`${g.nome}: nada a imprimir.`);
+          continue;
+        }
+
+        desmarcarTodos();
+        const marcados = imprimiveis.filter((p) => marcar(p.row));
+        if (marcados.length < imprimiveis.length) log(`${g.nome}: ${imprimiveis.length - marcados.length} pedido(s) sem checkbox — não impressos.`);
+        const naTela = contarMarcados();
+        if (naTela !== marcados.length) {
+          desmarcarTodos();
+          throw new Error(`marcação não confere (${naTela} marcados na tela, esperado ${marcados.length}) — nada impresso`);
+        }
+        if (!marcados.length) throw new Error("nenhum pedido pôde ser marcado");
+
+        if (sim) {
+          g.simulados = marcados.length;
+          simulados += marcados.length;
+          desmarcarTodos();
+          log(`${g.nome}: SIMULAÇÃO — seriam impressos: ${marcados.map((p) => p.pedido).join(", ")}`);
+          continue;
+        }
+
+        const antes = assinatura();
+        const obs = observarTabela();
+        elementos().finalizar.click();
+        await confirmarDialogos();
+        await esperarTabela(antes, obs);
+        await sleep(T.aposFinalizar);
+
+        const hoje = dataBR(new Date());
+        for (const p of marcados) {
+          estado.impressosNaExecucao.add(chave(p.pedido));
+          estado.registros.push({ caminhao: p.caminhao, rota: p.rota, pedido: p.pedido, entrega: p.entrega, impressao: hoje, reimpressao: p.classe === "REIMPRIMIR" });
+        }
+        g.impressosAgora += marcados.length;
+        salvarExecucao();
+        copiar(tsv(estado.registros)).catch(() => {});
+        log(`${g.nome}: ${marcados.length} pedido(s) impressos.`);
+
+        if (CONFIG.conferirAposImprimir) {
+          setStatus(`Conferindo ${g.nome}`);
+          const r2 = await buscar(g.consulta);
+          const depois = new Map(doGrupo(g, r2.pedidos).map((p) => [chave(p.pedido), p]));
+          g.naoConfirmados = marcados.filter((p) => !depois.has(chave(p.pedido)) || depois.get(chave(p.pedido)).classe !== "IMPRESSO").map((p) => p.pedido);
+          if (r2.ok) atualizarPedidos(g, [...depois.values()]);
+          if (g.naoConfirmados.length) {
+            naoConfirmados += g.naoConfirmados.length;
+            log(`${g.nome}: ATENÇÃO — ${g.naoConfirmados.length} pedido(s) não aparecem como impressos: ${g.naoConfirmados.join(", ")}`);
+          }
+        }
+      } catch (e) {
+        g.erro = e.message;
+        log(`${g.nome}: ERRO — ${e.message}`);
+      } finally {
         estado.progresso.feito++;
         agendarRender();
       }
-
-      for (const g of estado.grupos.values()) g.selecionado = g.resumo.aImprimir > 0 && !g.fora;
-      estado.mapeadoEm = new Date();
-      const lista = [...estado.grupos.values()];
-      const faltam = lista.filter((g) => g.resumo.aImprimir > 0 && !g.fora);
-      const pedidos = faltam.reduce((s, g) => s + g.resumo.aImprimir, 0);
-      terminar(
-        (estado.parar ? "Mapeamento interrompido. " : "Mapeamento concluído. ") +
-          `${lista.length} caminhões com pedidos · ${faltam.length} com pedidos a imprimir (${pedidos} pedidos).`
-      );
-    } catch (e) {
-      terminar("Erro no mapeamento: " + e.message);
-      alert("SLC PreOp: " + e.message);
-    }
-  }
-
-  // ============================================================
-  // IMPRIMIR — na ordem de prioridade, só os caminhões selecionados
-  // ============================================================
-  async function imprimir() {
-    if (estado.rodando) return;
-    const alvo = ordenarGrupos([...estado.grupos.values()]).filter((g) => g.selecionado);
-    if (!alvo.length) {
-      alert("Nenhum caminhão selecionado. Mapeie e marque os caminhões que quer imprimir.");
-      return;
-    }
-    const sim = estado.simulacao;
-    const total = alvo.reduce((s, g) => s + g.resumo.aImprimir, 0);
-    const modoNome = CONFIG.modos[estado.modo].nome;
-    if (!sim && !confirm(`Imprimir ${modoNome}: ${alvo.length} caminhões, cerca de ${total} pedidos.\n\nContinuar?`)) return;
-
-    iniciar("imprimir", alvo.length);
-    for (const g of estado.grupos.values()) {
-      g.simulados = 0;
-      if (!sim) g.impressosAgora = 0;
-    }
-    if (!sim) {
-      estado.registros = [];
-      estado.impressosNaExecucao = new Set();
-      estado.execucao = { modo: estado.modo, quando: new Date().toISOString() };
-      salvarExecucao();
-    }
-    let simulados = 0;
-    let falhas = 0;
-    try {
-      await ativarModo(estado.modo);
-      let ultimaId = null;
-      for (const g of alvo) {
-        if (estado.parar) break;
-        g.erro = null;
-        g.naoConfirmados = [];
-        setStatus(`${sim ? "Simulando" : "Imprimindo"} ${g.nome} (${g.prioridade.grupo} · ${g.prioridade.tipo})…`);
-        try {
-          const r = await buscar(g.consulta);
-          const id = idConsulta(g.consulta);
-          if (!r.ok) throw new Error("o KDABRA demorou demais para responder");
-          if (!r.mudou && r.pedidos.length && ultimaId && ultimaId !== id)
-            throw new Error("a tabela não atualizou depois da busca (pode ser a do caminhão anterior)");
-          ultimaId = id;
-
-          const linhas = doGrupo(g, r.pedidos);
-          if (r.pedidos.length && !linhas.length) throw new Error("a tabela mostrou pedidos de outro caminhão");
-          atualizarPedidos(g, linhas);
-          const imprimiveis = linhas.filter((p) => IMPRIMIVEL.includes(p.classe) && !estado.impressosNaExecucao.has(chave(p.pedido)));
-          if (!imprimiveis.length) {
-            log(`${g.nome}: nada a imprimir.`);
-            continue;
-          }
-
-          desmarcarTodos();
-          const marcados = imprimiveis.filter((p) => marcar(p.row));
-          const semMarca = imprimiveis.length - marcados.length;
-          if (semMarca) log(`${g.nome}: ${semMarca} pedido(s) sem checkbox — não impressos.`);
-          const naTela = contarMarcados();
-          if (naTela !== marcados.length) {
-            desmarcarTodos();
-            throw new Error(`marcação não confere (${naTela} marcados na tela, esperado ${marcados.length}) — nada impresso`);
-          }
-          if (!marcados.length) throw new Error("nenhum pedido pôde ser marcado");
-
-          if (sim) {
-            g.simulados = marcados.length;
-            simulados += marcados.length;
-            desmarcarTodos();
-            log(`${g.nome}: SIMULAÇÃO — ${marcados.length} pedido(s) seriam impressos: ${marcados.map((p) => p.pedido).join(", ")}`);
-            continue;
-          }
-
-          const antes = assinatura();
-          const obs = observarTabela();
-          elementos().finalizar.click();
-          await confirmarDialogos();
-          await esperarTabela(antes, obs);
-          await sleep(T.aposFinalizar);
-
-          const hoje = dataBR(new Date());
-          for (const p of marcados) {
-            estado.impressosNaExecucao.add(chave(p.pedido));
-            estado.registros.push({ caminhao: p.caminhao, rota: p.rota, pedido: p.pedido, entrega: p.entrega, impressao: hoje, grupo: g.nome, reimpressao: p.classe === "REIMPRIMIR" });
-          }
-          g.impressosAgora += marcados.length;
-          salvarExecucao();
-          copiar(tsv(estado.registros)).catch(() => {});
-          log(`${g.nome}: ${marcados.length} pedido(s) enviados para impressão.`);
-
-          if (CONFIG.conferirAposImprimir && !estado.parar) {
-            setStatus(`Conferindo ${g.nome}…`);
-            const r2 = await buscar(g.consulta);
-            const depois = new Map(doGrupo(g, r2.pedidos).map((p) => [chave(p.pedido), p]));
-            g.naoConfirmados = marcados.filter((p) => {
-              const q = depois.get(chave(p.pedido));
-              return !q || q.classe !== "IMPRESSO";
-            }).map((p) => p.pedido);
-            if (r2.ok) atualizarPedidos(g, [...depois.values()]);
-            if (g.naoConfirmados.length) {
-              falhas += g.naoConfirmados.length;
-              log(`${g.nome}: ATENÇÃO — ${g.naoConfirmados.length} pedido(s) não aparecem como impressos: ${g.naoConfirmados.join(", ")}`);
-            }
-          }
-          g.selecionado = g.resumo.aImprimir > 0;
-        } catch (e) {
-          g.erro = e.message;
-          log(`${g.nome}: ERRO — ${e.message}`);
-        } finally {
-          estado.progresso.feito++;
-          agendarRender();
-        }
-      }
-    } catch (e) {
-      log("Erro geral: " + e.message);
     }
 
+    const parado = estado.parar;
     if (sim) {
-      terminar(`Simulação ${estado.parar ? "interrompida" : "concluída"}: ${simulados} pedidos seriam impressos. Nada foi impresso.`);
+      fim(`🧪 Simulação ${parado ? "parada" : "concluída"}: ${simulados} pedidos seriam impressos. Nada foi impresso.`);
       return;
     }
     const n = estado.registros.length;
     const rep = estado.registros.filter((x) => x.reimpressao).length;
-    const copiou = n ? await copiar(tsv(estado.registros)) : false;
     const erros = alvo.filter((g) => g.erro).length;
-    terminar(
-      `${estado.parar ? "Parado" : "Finalizado"}: ${n} pedidos impressos (${rep} reimpressões 7d+)` +
+    const copiou = n ? await copiar(tsv(estado.registros)) : false;
+    fim(
+      `${parado ? "⏹️ Parado" : "✅ Finalizado"}: ${n} pedidos impressos (${rep} reimpressos 7d+)` +
         (erros ? ` · ${erros} caminhão(ões) com erro` : "") +
-        (falhas ? ` · ${falhas} não confirmados` : "") +
-        (n ? (copiou ? " · copiado, cole na Impressos V2 (Ctrl+V)." : " · clique em “Copiar para Impressos V2”.") : ".")
+        (naoConfirmados ? ` · ${naoConfirmados} não confirmados` : "") +
+        (n ? (copiou ? " · copiado, cole na Impressos V2." : " · clique em “Copiar para Impressos V2”.") : ".")
     );
     alert(
-      `${estado.parar ? "⏹️ Parado" : "✅ Finalizado"} — ${modoNome}\n\n` +
-        `Pedidos impressos: ${n}\nReimpressões 7d+: ${rep}\n` +
-        (erros ? `Caminhões com erro: ${erros} (veja o painel)\n` : "") +
-        (falhas ? `Pedidos NÃO confirmados: ${falhas} (veja o painel)\n` : "") +
-        (n ? (copiou ? "\nJá está copiado: abra a Impressos V2 e aperte Ctrl+V." : "\nClique em “Copiar para Impressos V2” no painel.") : "")
+      `${parado ? "⏹️ Parado." : "✅ Finalizado."}\n\nModo: ${modoNome()}\n` +
+        `Pedidos impressos/copiados para Impressos V2: ${n}\nReimpressos 7+d: ${rep}\n` +
+        (erros ? `\n⚠️ Caminhões com erro (não impressos): ${alvo.filter((g) => g.erro).map((g) => g.nome).join(", ")}\n` : "") +
+        (naoConfirmados ? `\n⚠️ Pedidos que não apareceram como impressos: ${naoConfirmados} (veja no painel)\n` : "") +
+        (n ? (copiou ? "\nAgora abre a planilha e aperta Ctrl+V." : "\nClique em “Copiar para Impressos V2” no painel e cole na planilha.") : "")
     );
   }
 
@@ -905,16 +875,18 @@ const SLC_PREOP_MODO = "fresh";
   };
 
   const situacaoTexto = (g) => (g.erro ? "Erro: " + g.erro : g.fora ? "Fora da fila" : SITUACOES[g.resumo.situacao].rotulo);
+  const registrosParaCopiar = () => (estado.registros.length ? estado.registros : estado.anterior ? estado.anterior.registros : []);
 
   async function copiarRegistros() {
-    if (!estado.registros.length) return setStatus("Nenhum pedido impresso para copiar ainda.");
-    const ok = await copiar(tsv(estado.registros));
-    setStatus(ok ? `${estado.registros.length} pedidos copiados — cole na Impressos V2 (Ctrl+V).` : "Não consegui copiar. Tente de novo.");
+    const regs = registrosParaCopiar();
+    if (!regs.length) return setStatus("Nenhum pedido impresso para copiar ainda.");
+    const ok = await copiar(tsv(regs));
+    setStatus(ok ? `${regs.length} pedidos copiados — cole na Impressos V2 (Ctrl+V).` : "Não consegui copiar. Tente de novo.");
   }
 
   async function copiarResumo() {
     const lista = ordenarGrupos([...estado.grupos.values()]);
-    if (!lista.length) return setStatus("Mapeie os caminhões primeiro.");
+    if (!lista.length) return setStatus("Nenhum caminhão lido ainda.");
     const linhas = [["Caminhão", "Prioridade", "Pedidos", "A imprimir", "Reimprimir 7d+", "Impressos", "Pendentes", "Situação"]];
     lista.forEach((g) => linhas.push([g.nome, g.prioridade.grupo + " · " + g.prioridade.tipo, g.resumo.total, g.resumo.aImprimir, g.resumo.reimprimir, g.resumo.impresso, g.resumo.pendente, situacaoTexto(g)]));
     const ok = await copiar(linhas.map((l) => l.map(limpar).join("\t")).join("\n"));
@@ -923,11 +895,11 @@ const SLC_PREOP_MODO = "fresh";
 
   function baixarRelatorio() {
     const lista = ordenarGrupos([...estado.grupos.values()]);
-    if (!lista.length) return setStatus("Mapeie os caminhões primeiro.");
+    if (!lista.length) return setStatus("Nenhum caminhão lido ainda.");
     const linhas = [["Modo", "Caminhão", "Prioridade", "Situação do caminhão", "Rota", "Pedido", "Data Entrega", "Data Impressão", "Situação do pedido"]];
     for (const g of lista)
       for (const p of g.pedidos.values())
-        linhas.push([CONFIG.modos[estado.modo].nome, g.nome, g.prioridade.grupo + " · " + g.prioridade.tipo, situacaoTexto(g), p.rota, p.pedido, p.entrega, p.impressao, CLASSES[p.classe]]);
+        linhas.push([modoNome(), g.nome, g.prioridade.grupo + " · " + g.prioridade.tipo, situacaoTexto(g), p.rota, p.pedido, p.entrega, p.impressao, CLASSES[p.classe]]);
     const blob = new Blob(["﻿" + csv(linhas)], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -962,12 +934,12 @@ const SLC_PREOP_MODO = "fresh";
       colunasDetectadas: detectarColunas(cabecalhos()),
       linhasNaTabela: linhasTabela().length,
       amostra: linhasTabela().slice(0, 5).map((tr) => [...tr.children].map((td) => (caixaDaLinha(tr) && td.contains(caixaDaLinha(tr)) ? "[checkbox] " : "") + m(td.textContent))),
-      estrategiaUsada: estado.estrategia,
+      leituraUsada: estado.estrategia,
     };
     const txt = JSON.stringify(r, null, 1);
     console.log(txt);
     const ok = await copiar(txt);
-    setStatus(ok ? "Diagnóstico copiado (sem dados reais). Cole para quem está dando suporte." : "Diagnóstico no console (F12).");
+    setStatus(ok ? "Diagnóstico copiado (sem dados reais)." : "Diagnóstico no console (F12).");
   }
 
   // ============================================================
@@ -977,48 +949,44 @@ const SLC_PREOP_MODO = "fresh";
 :host{all:initial}
 [hidden]{display:none!important}
 *{box-sizing:border-box;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-.painel{position:fixed;right:14px;bottom:14px;z-index:2147483000;width:min(640px,calc(100vw - 28px));max-height:calc(100vh - 28px);display:flex;flex-direction:column;background:#15171b;color:#e8eaed;border:1px solid #2c3038;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-size:13px;overflow:hidden}
-.topo{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#1d2026;border-bottom:1px solid #2c3038;cursor:move;user-select:none}
-.titulo{flex:1;display:flex;align-items:baseline;gap:6px;font-size:14px}
-.versao{font-size:11px;color:#8b93a1}
-button{font:inherit;color:inherit;background:#2a2e36;border:1px solid #3a3f49;border-radius:8px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+.painel{position:fixed;right:14px;bottom:14px;z-index:2147483000;width:min(460px,calc(100vw - 28px));max-height:calc(100vh - 28px);display:flex;flex-direction:column;background:#15171b;color:#e8eaed;border:1px solid #2c3038;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-size:13px;overflow:hidden}
+.topo{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#1d2026;border-bottom:1px solid #2c3038;cursor:move;user-select:none}
+.titulo{flex:1;font-size:14px}
+.versao{font-size:11px;color:#8b93a1;margin-left:4px}
+button{font:inherit;color:inherit;background:#2a2e36;border:1px solid #3a3f49;border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap}
 button:hover:not(:disabled){background:#343944}
-button:disabled{opacity:.45;cursor:not-allowed}
-.modos{display:flex;border:1px solid #3a3f49;border-radius:9px;overflow:hidden}
-.modos button{border:0;border-radius:0;padding:5px 12px;background:transparent}
-.modos button.ativo{background:#3b6ef5;color:#fff}
-.janela button{padding:3px 9px;margin-left:2px}
+.janela button{padding:3px 9px}
 .corpo{display:flex;flex-direction:column;gap:10px;padding:12px;overflow:auto;min-height:0}
-.acoes{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.primario{background:#3b6ef5;border-color:#3b6ef5;color:#fff}
-.primario:hover:not(:disabled){background:#2f5fe0}
-.imprimir{background:#1f8f4e;border-color:#1f8f4e;color:#fff}
-.imprimir:hover:not(:disabled){background:#1a7a43}
-.perigo{background:#c94040;border-color:#c94040;color:#fff}
-.sim{display:flex;align-items:center;gap:6px;margin-left:auto;color:#c4c9d2;cursor:pointer}
-.barra{height:6px;background:#2a2e36;border-radius:4px;overflow:hidden}
+.barra{height:8px;background:#2a2e36;border-radius:4px;overflow:hidden}
 .barra i{display:block;height:100%;width:0;background:#3b6ef5;transition:width .3s}
-.status{margin-top:6px;color:#c4c9d2;line-height:1.4}
-.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.barra.ok i{background:#1f8f4e}
+.status{color:#e8eaed;line-height:1.4}
+.etapa{font-size:11px;color:#8b93a1;margin-top:2px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .kpis div{background:#1d2026;border:1px solid #2c3038;border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:2px}
 .kpis b{font-size:20px;font-weight:650}
-.kpis span{font-size:11px;color:#8b93a1}
-.kpis .verde b{color:#4cc27f}.kpis .vermelho b{color:#ff6b6b}.kpis .amarelo b{color:#f5c04a}
-.filtros{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.chip{padding:4px 10px;border-radius:999px;font-size:12px}
-.chip.ativo{background:#e8eaed;color:#15171b;border-color:#e8eaed}
-input[type=search]{flex:1;min-width:120px;background:#0f1114;color:inherit;border:1px solid #3a3f49;border-radius:8px;padding:6px 9px;font:inherit}
-.tabela{border:1px solid #2c3038;border-radius:10px;overflow:auto;max-height:42vh;min-height:90px}
+.kpis span{font-size:11px;color:#8b93a1;line-height:1.2}
+.kpis .verde b{color:#4cc27f}.kpis .amarelo b{color:#f5c04a}.kpis .vermelho b{color:#ff6b6b}
+.acoes{display:flex;gap:8px}
+.acoes button{flex:1}
+.copiar{background:#1f8f4e;border-color:#1f8f4e;color:#fff;font-weight:600}
+.copiar:hover:not(:disabled){background:#1a7a43}
+.perigo{background:#c94040;border-color:#c94040;color:#fff}
+details{border-top:1px solid #2c3038;padding-top:8px}
+summary{cursor:pointer;color:#aab1bd;user-select:none}
+.mais{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.mais .botoes{display:flex;flex-wrap:wrap;gap:6px}
+.mais .botoes button{padding:5px 9px;font-size:12px}
+.tabela{border:1px solid #2c3038;border-radius:10px;overflow:auto;max-height:34vh}
 table{width:100%;border-collapse:collapse}
-th{position:sticky;top:0;background:#1d2026;text-align:left;font-weight:600;font-size:11px;color:#8b93a1;text-transform:uppercase;letter-spacing:.03em;padding:7px 8px;border-bottom:1px solid #2c3038}
-td{padding:6px 8px;border-bottom:1px solid #22252b;vertical-align:middle}
+th{position:sticky;top:0;background:#1d2026;text-align:left;font-weight:600;font-size:11px;color:#8b93a1;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid #2c3038}
+td{padding:5px 8px;border-bottom:1px solid #22252b;vertical-align:middle}
 tr.cam{cursor:pointer}
 tr.cam:hover td{background:#1b1e23}
-tr.cam.fora td{opacity:.6}
 .n{text-align:right;font-variant-numeric:tabular-nums}
 .nome{font-weight:650}
 .pri{font-size:11px;color:#8b93a1}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.tag{display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap;margin:1px 0}
 .tag.verde{background:rgba(76,194,127,.15);color:#4cc27f}
 .tag.vermelho{background:rgba(255,107,107,.15);color:#ff6b6b}
 .tag.amarelo{background:rgba(245,192,74,.15);color:#f5c04a}
@@ -1027,67 +995,54 @@ tr.cam.fora td{opacity:.6}
 .tag.azul{background:rgba(59,110,245,.2);color:#8fb0ff}
 .detalhe td{background:#101215;padding:0}
 .detalhe table{font-size:12px}
-.detalhe td td,.detalhe th{padding:4px 8px}
 .detalhe th{position:static;background:#101215}
-.vazio{padding:22px;text-align:center;color:#8b93a1}
-.rodape{display:flex;flex-wrap:wrap;gap:6px}
-.log{margin:0;max-height:160px;overflow:auto;background:#0f1114;border:1px solid #2c3038;border-radius:8px;padding:8px;font:11px/1.45 ui-monospace,Consolas,monospace;color:#aab1bd;white-space:pre-wrap}
+.vazio{padding:16px;text-align:center;color:#8b93a1}
+.log{margin:0;max-height:150px;overflow:auto;background:#0f1114;border:1px solid #2c3038;border-radius:8px;padding:8px;font:11px/1.45 ui-monospace,Consolas,monospace;color:#aab1bd;white-space:pre-wrap}
 .pilula{position:fixed;right:14px;bottom:14px;z-index:2147483000;background:#3b6ef5;color:#fff;border:0;border-radius:999px;padding:9px 14px;box-shadow:0 6px 24px rgba(0,0,0,.45)}
-@media (max-width:560px){.kpis{grid-template-columns:repeat(3,1fr)}.sim{margin-left:0}}
 `;
 
   const HTML = `
-<div class="painel" part="painel">
+<div class="painel">
   <div class="topo">
-    <div class="titulo"><b>SLC PreOp</b><span class="versao">v${VERSAO}</span></div>
-    <div class="modos">${Object.entries(CONFIG.modos).map(([k, m]) => `<button data-modo="${k}">${m.nome}</button>`).join("")}</div>
-    <div class="janela"><button data-acao="minimizar" title="Minimizar">–</button><button data-acao="fechar" title="Fechar">×</button></div>
+    <div class="titulo"><b>SLC PreOp · <span data-campo="modo"></span></b><span class="versao">v${VERSAO}</span></div>
+    <div class="janela"><button data-acao="minimizar" title="Minimizar">–</button> <button data-acao="fechar" title="Fechar">×</button></div>
   </div>
   <div class="corpo">
-    <div class="acoes">
-      <button class="primario" data-acao="mapear">🔍 Mapear caminhões</button>
-      <button class="imprimir" data-acao="imprimir">🖨️ Imprimir selecionados (<span data-campo="nSel">0</span>)</button>
-      <button class="perigo" data-acao="parar" hidden>⏹ Parar</button>
-      <label class="sim" title="Marca os pedidos e confere, mas não clica em Finalizar"><input type="checkbox" data-campo="simulacao"> Simulação</label>
-    </div>
     <div>
-      <div class="barra"><i data-campo="barra"></i></div>
+      <div class="barra" data-campo="barraBox"><i data-campo="barra"></i></div>
       <div class="status" data-campo="status"></div>
+      <div class="etapa" data-campo="etapa"></div>
     </div>
     <div class="kpis">
-      <div><b data-campo="kCam">–</b><span>caminhões</span></div>
-      <div class="verde"><b data-campo="kOk">–</b><span>tudo impresso</span></div>
-      <div class="vermelho"><b data-campo="kFalta">–</b><span>faltam imprimir</span></div>
-      <div class="amarelo"><b data-campo="kPed">–</b><span data-campo="kPedSub">pedidos a imprimir</span></div>
-      <div><b data-campo="kPend">–</b><span>pendentes</span></div>
+      <div class="verde"><b data-campo="kImp">0</b><span>pedidos impressos</span></div>
+      <div class="amarelo"><b data-campo="kRep">0</b><span>reimpressos 7d+</span></div>
+      <div><b data-campo="kPend">0</b><span>pendentes ignorados</span></div>
+      <div class="vermelho"><b data-campo="kErro">0</b><span>caminhões com erro</span></div>
     </div>
-    <div class="filtros">
-      <button class="chip" data-filtro="todos">Todos</button>
-      <button class="chip" data-filtro="falta">Faltam imprimir</button>
-      <button class="chip" data-filtro="ok">Impressos</button>
-      <button class="chip" data-filtro="pend">Só pendentes</button>
-      <button class="chip" data-filtro="fora">Fora da fila</button>
-      <button class="chip" data-filtro="erro">Erros</button>
-      <input type="search" placeholder="Buscar caminhão…" data-campo="busca">
+    <div class="acoes">
+      <button class="perigo" data-acao="parar">⏹ Parar</button>
+      <button class="copiar" data-acao="copiarTsv">📋 <span data-campo="copiarTxt">Copiar para Impressos V2</span></button>
+      <button data-acao="rodar" title="Rodar de novo">↻ Rodar de novo</button>
     </div>
-    <div class="tabela">
-      <table>
-        <thead><tr>
-          <th><input type="checkbox" data-acao="selTodos" title="Selecionar os visíveis com pedidos a imprimir"></th>
-          <th>Caminhão</th><th class="n">Pedidos</th><th class="n">A imprimir</th><th class="n">Impressos</th><th class="n">Pend.</th><th>Situação</th>
-        </tr></thead>
-        <tbody data-campo="linhas"></tbody>
-      </table>
-      <div class="vazio" data-campo="vazio">Nenhum caminhão mapeado ainda.</div>
-    </div>
-    <div class="rodape">
-      <button data-acao="copiarTsv">📋 Copiar para Impressos V2 (<span data-campo="nReg">0</span>)</button>
-      <button data-acao="copiarResumo">📊 Copiar resumo</button>
-      <button data-acao="relatorio">⬇️ Relatório CSV</button>
-      <button data-acao="diagnostico">🩺 Diagnóstico</button>
-      <button data-acao="log">📜 Log</button>
-    </div>
-    <pre class="log" data-campo="log" hidden></pre>
+    <details data-campo="detalhes">
+      <summary>Caminhões (<span data-campo="nCam">0</span>) e mais opções</summary>
+      <div class="mais">
+        <div class="tabela">
+          <table>
+            <thead><tr><th>Caminhão</th><th class="n">Pedidos</th><th class="n">Impr. agora</th><th>Situação</th></tr></thead>
+            <tbody data-campo="linhas"></tbody>
+          </table>
+          <div class="vazio" data-campo="vazio">Os caminhões aparecem aqui conforme são lidos.</div>
+        </div>
+        <div class="botoes">
+          <button data-acao="copiarResumo">📊 Copiar resumo</button>
+          <button data-acao="relatorio">⬇️ Relatório CSV</button>
+          <button data-acao="diagnostico">🩺 Diagnóstico</button>
+          <button data-acao="log">📜 Log</button>
+        </div>
+        <pre class="log" data-campo="log" hidden></pre>
+      </div>
+    </details>
   </div>
 </div>
 <button class="pilula" data-acao="restaurar" hidden>🖨️ SLC PreOp · <span data-campo="pilula"></span></button>`;
@@ -1102,40 +1057,25 @@ tr.cam.fora td{opacity:.6}
   const campo = (n) => raiz.querySelector(`[data-campo="${n}"]`);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-  const FILTROS = {
-    todos: () => true,
-    falta: (g) => g.resumo.aImprimir > 0 && !g.fora,
-    ok: (g) => g.resumo.situacao === "IMPRESSO",
-    pend: (g) => g.resumo.situacao === "SO_PENDENTES",
-    fora: (g) => g.fora,
-    erro: (g) => g.erro || g.naoConfirmados.length,
-  };
-
-  const visiveis = () =>
-    ordenarGrupos([...estado.grupos.values()]).filter(
-      (g) => FILTROS[estado.filtro](g) && (!estado.busca || chave(g.nome).includes(chave(estado.busca)))
-    );
-
   function tagsGrupo(g) {
     const t = [];
-    if (g.erro) t.push(`<span class="tag laranja" title="${esc(g.erro)}">⚠️ Erro</span>`);
+    if (g.erro) t.push(`<span class="tag laranja" title="${esc(g.erro)}">⚠️ Erro: ${esc(g.erro)}</span>`);
     if (g.naoConfirmados.length) t.push(`<span class="tag vermelho" title="${esc(g.naoConfirmados.join(", "))}">${g.naoConfirmados.length} não confirmado(s)</span>`);
     if (g.fora) t.push(`<span class="tag cinza">Fora da fila</span>`);
-    else {
+    else if (!g.erro) {
       const s = SITUACOES[g.resumo.situacao];
       t.push(`<span class="tag ${s.cor}">${s.rotulo}</span>`);
     }
-    if (g.impressosAgora) t.push(`<span class="tag azul">+${g.impressosAgora} agora</span>`);
     if (g.simulados) t.push(`<span class="tag azul">${g.simulados} na simulação</span>`);
     return t.join(" ");
   }
 
   function linhaDetalhe(g) {
-    const ped = [...g.pedidos.values()].sort((a, b) => IMPRIMIVEL.includes(b.classe) - IMPRIMIVEL.includes(a.classe) || compararNatural(a.pedido, b.pedido));
+    const ped = [...g.pedidos.values()].sort((a, b) => compararNatural(a.pedido, b.pedido));
     const cor = { NAO_IMPRESSO: "vermelho", REIMPRIMIR: "amarelo", IMPRESSO: "verde", PENDENTE: "cinza", DATA_INVALIDA: "laranja" };
-    return `<tr class="detalhe"><td colspan="7"><table>
-      <thead><tr><th>Pedido</th><th>Rota</th><th>Data Entrega</th><th>Data Impressão</th><th>Situação</th></tr></thead>
-      <tbody>${ped.map((p) => `<tr><td>${esc(p.pedido)}</td><td>${esc(p.rota)}</td><td>${esc(p.entrega)}</td><td>${esc(p.impressao)}</td><td><span class="tag ${cor[p.classe]}">${CLASSES[p.classe]}</span></td></tr>`).join("")}</tbody>
+    return `<tr class="detalhe"><td colspan="4"><table>
+      <thead><tr><th>Pedido</th><th>Data Impressão</th><th>Situação</th></tr></thead>
+      <tbody>${ped.map((p) => `<tr><td>${esc(p.pedido)}</td><td>${esc(p.impressao)}</td><td><span class="tag ${cor[p.classe]}">${CLASSES[p.classe]}</span></td></tr>`).join("")}</tbody>
     </table></td></tr>`;
   }
 
@@ -1150,70 +1090,59 @@ tr.cam.fora td{opacity:.6}
   }
 
   function render() {
-    const grupos = [...estado.grupos.values()];
-    const ativos = grupos.filter((g) => !g.fora);
+    const grupos = ordenarGrupos([...estado.grupos.values()]);
     const rodando = !!estado.rodando;
-
-    raiz.querySelectorAll("[data-modo]").forEach((b) => {
-      b.classList.toggle("ativo", b.dataset.modo === estado.modo);
-      b.disabled = rodando;
-    });
-    raiz.querySelectorAll("[data-filtro]").forEach((b) => b.classList.toggle("ativo", b.dataset.filtro === estado.filtro));
-    q('[data-acao="mapear"]').disabled = rodando;
-    const sel = grupos.filter((g) => g.selecionado);
-    q('[data-acao="imprimir"]').disabled = rodando || !sel.length;
-    q('[data-acao="imprimir"]').firstChild.textContent = estado.simulacao ? "🧪 Simular selecionados (" : "🖨️ Imprimir selecionados (";
-    q('[data-acao="parar"]').hidden = !rodando;
-    campo("simulacao").checked = estado.simulacao;
-    campo("simulacao").disabled = rodando;
-    campo("nSel").textContent = sel.length;
-    campo("nReg").textContent = estado.registros.length;
+    campo("modo").textContent = modoNome();
 
     const pr = estado.progresso;
-    const pct = pr.total ? Math.min(100, Math.round((pr.feito / pr.total) * 100)) : rodando ? 0 : grupos.length ? 100 : 0;
+    const pct = pr.total ? Math.min(100, Math.round((pr.feito / pr.total) * 100)) : rodando ? 0 : 100;
     campo("barra").style.width = pct + "%";
-    let eta = "";
-    if (rodando && pr.feito > 0 && pr.total > pr.feito) {
-      const s = Math.round((((Date.now() - pr.inicio) / pr.feito) * (pr.total - pr.feito)) / 1000);
-      eta = ` · ${pr.feito}/${pr.total} · faltam ~${s >= 60 ? Math.round(s / 60) + " min" : s + " s"}`;
-    } else if (rodando && pr.total) eta = ` · ${pr.feito}/${pr.total}`;
-    campo("status").textContent = estado.status + eta;
+    campo("barraBox").classList.toggle("ok", !rodando);
+    campo("status").textContent = estado.status;
+    let etapa = "";
+    if (rodando) {
+      etapa = estado.rodando === "mapear" ? "Etapa 1 de 2 · lendo caminhões" : `Etapa 2 de 2 · ${CONFIG.simulacao ? "simulando" : "imprimindo"}`;
+      if (pr.total) etapa += ` · ${pr.feito}/${pr.total}`;
+      if (pr.feito > 0 && pr.total > pr.feito) {
+        const s = Math.round((((Date.now() - pr.inicio) / pr.feito) * (pr.total - pr.feito)) / 1000);
+        etapa += ` · faltam ~${s >= 60 ? Math.round(s / 60) + " min" : s + " s"}`;
+      }
+    }
+    campo("etapa").textContent = etapa;
 
-    const soma = (k) => ativos.reduce((s, g) => s + g.resumo[k], 0);
-    const m = grupos.length > 0;
-    campo("kCam").textContent = m ? grupos.length : "–";
-    campo("kOk").textContent = m ? ativos.filter((g) => g.resumo.situacao === "IMPRESSO").length : "–";
-    campo("kFalta").textContent = m ? ativos.filter((g) => g.resumo.aImprimir > 0).length : "–";
-    campo("kPed").textContent = m ? soma("aImprimir") : "–";
-    campo("kPedSub").textContent = m && soma("reimprimir") ? `a imprimir (${soma("reimprimir")} reimpr.)` : "pedidos a imprimir";
-    campo("kPend").textContent = m ? soma("pendente") : "–";
+    campo("kImp").textContent = estado.registros.length;
+    campo("kRep").textContent = estado.registros.filter((x) => x.reimpressao).length;
+    campo("kPend").textContent = grupos.reduce((s, g) => s + g.resumo.pendente, 0);
+    campo("kErro").textContent = grupos.filter((g) => g.erro).length;
 
-    const lista = visiveis();
-    campo("linhas").innerHTML = lista
-      .map((g) => {
-        const r = g.resumo;
-        const aberto = estado.abertos.has(g.id);
-        return `<tr class="cam${g.fora ? " fora" : ""}" data-id="${esc(g.id)}">
-          <td><input type="checkbox" data-sel="${esc(g.id)}" ${g.selecionado ? "checked" : ""} ${r.aImprimir && !rodando ? "" : "disabled"}></td>
+    q('[data-acao="parar"]').hidden = !rodando;
+    q('[data-acao="rodar"]').hidden = rodando;
+    const regs = registrosParaCopiar();
+    campo("copiarTxt").textContent =
+      !estado.registros.length && estado.anterior
+        ? `Copiar última impressão (${hora(estado.anterior.quando)}, ${regs.length})`
+        : `Copiar para Impressos V2 (${regs.length})`;
+    q('[data-acao="copiarTsv"]').disabled = !regs.length;
+
+    campo("nCam").textContent = grupos.length;
+    if (campo("detalhes").open) {
+      campo("linhas").innerHTML = grupos
+        .map((g) => {
+          const aberto = estado.abertos.has(g.id);
+          return `<tr class="cam" data-id="${esc(g.id)}">
           <td><div class="nome">${aberto ? "▾" : "▸"} ${esc(g.nome)}</div><div class="pri">${esc(g.prioridade.grupo)} · ${esc(g.prioridade.tipo)}</div></td>
-          <td class="n">${r.total}</td><td class="n">${r.aImprimir ? `<b>${r.aImprimir}</b>` : 0}${r.reimprimir ? ` <span class="pri">(${r.reimprimir} 7d+)</span>` : ""}</td>
-          <td class="n">${r.impresso}</td><td class="n">${r.pendente}</td><td>${tagsGrupo(g)}</td>
+          <td class="n">${g.resumo.total}</td><td class="n">${g.impressosAgora || ""}</td><td>${tagsGrupo(g)}</td>
         </tr>${aberto ? linhaDetalhe(g) : ""}`;
-      })
-      .join("");
-    campo("vazio").hidden = lista.length > 0;
-    campo("vazio").textContent = grupos.length ? "Nenhum caminhão neste filtro." : "Nenhum caminhão mapeado ainda. Clique em “Mapear caminhões”.";
-    const elegiveis = lista.filter((g) => g.resumo.aImprimir > 0);
-    const selTodos = q('[data-acao="selTodos"]');
-    selTodos.checked = elegiveis.length > 0 && elegiveis.every((g) => g.selecionado);
-    selTodos.disabled = rodando || !elegiveis.length;
-
+        })
+        .join("");
+      campo("vazio").hidden = grupos.length > 0;
+    }
     const logEl = campo("log");
     if (!logEl.hidden) {
       logEl.textContent = estado.logs.join("\n");
       logEl.scrollTop = logEl.scrollHeight;
     }
-    campo("pilula").textContent = rodando ? `${estado.rodando === "mapear" ? "mapeando" : "imprimindo"} ${pct}%` : CONFIG.modos[estado.modo].nome;
+    campo("pilula").textContent = rodando ? `${pct}%` : modoNome();
   }
 
   function minimizar(sim) {
@@ -1229,33 +1158,14 @@ tr.cam.fora td{opacity:.6}
   }
 
   raiz.addEventListener("click", (e) => {
-    const alvo = e.target;
-    const modo = alvo.closest("[data-modo]");
-    if (modo && !estado.rodando && modo.dataset.modo !== estado.modo) {
-      estado.modo = modo.dataset.modo;
-      estado.grupos = new Map();
-      setStatus(`Modo ${CONFIG.modos[estado.modo].nome}. Clique em “Mapear caminhões”.`);
-      return;
-    }
-    const filtro = alvo.closest("[data-filtro]");
-    if (filtro) {
-      estado.filtro = filtro.dataset.filtro;
-      return agendarRender();
-    }
-    if (alvo.matches("[data-sel]")) {
-      const g = estado.grupos.get(alvo.dataset.sel);
-      if (g) g.selecionado = alvo.checked;
-      return agendarRender();
-    }
-    const acao = alvo.closest("[data-acao]");
+    const acao = e.target.closest("[data-acao]");
     if (acao) {
       const a = acao.dataset.acao;
-      if (a === "mapear") mapear();
-      else if (a === "imprimir") imprimir();
-      else if (a === "parar") {
+      if (a === "parar") {
         estado.parar = true;
         setStatus("Parando depois do caminhão atual…");
-      } else if (a === "copiarTsv") copiarRegistros();
+      } else if (a === "rodar") executar();
+      else if (a === "copiarTsv") copiarRegistros();
       else if (a === "copiarResumo") copiarResumo();
       else if (a === "relatorio") baixarRelatorio();
       else if (a === "diagnostico") diagnostico();
@@ -1265,30 +1175,16 @@ tr.cam.fora td{opacity:.6}
       } else if (a === "minimizar") minimizar(true);
       else if (a === "restaurar") minimizar(false);
       else if (a === "fechar") fechar();
-      else if (a === "selTodos") {
-        visiveis().filter((g) => g.resumo.aImprimir > 0).forEach((g) => (g.selecionado = alvo.checked));
-        agendarRender();
-      }
       return;
     }
-    const linha = alvo.closest("tr.cam");
+    const linha = e.target.closest("tr.cam");
     if (linha) {
       const id = linha.dataset.id;
       estado.abertos.has(id) ? estado.abertos.delete(id) : estado.abertos.add(id);
       agendarRender();
     }
   });
-
-  raiz.addEventListener("change", (e) => {
-    if (e.target === campo("simulacao")) {
-      estado.simulacao = e.target.checked;
-      agendarRender();
-    }
-  });
-  campo("busca").addEventListener("input", (e) => {
-    estado.busca = e.target.value;
-    agendarRender();
-  });
+  campo("detalhes").addEventListener("toggle", agendarRender);
 
   // Arrastar o painel pelo topo.
   q(".topo").addEventListener("mousedown", (e) => {
@@ -1312,26 +1208,22 @@ tr.cam.fora td{opacity:.6}
     e.preventDefault();
   });
 
+  // Clicar no favorito de novo: reabre o painel e, se não estiver rodando, roda de novo (como na v1).
   window.__SLC_PREOP__ = {
     versao: VERSAO,
     host,
     estado,
     mostrar(modo) {
       minimizar(false);
-      if (modo && CONFIG.modos[modo] && !estado.rodando && modo !== estado.modo) {
-        estado.modo = modo;
-        estado.grupos = new Map();
-        setStatus(`Modo ${CONFIG.modos[modo].nome}. Clique em “Mapear caminhões”.`);
-      }
+      if (estado.rodando) return;
+      if (modo && CONFIG.modos[modo]) estado.modo = modo;
+      executar();
     },
   };
 
   restaurarExecucao();
-  const faltando = elementos().faltando;
-  if (faltando.length) {
-    estado.status = "Não achei os filtros do KDABRA nesta tela (" + faltando.join(", ") + "). Abra o Checkout ou use 🩺 Diagnóstico.";
-  }
-  log(`SLC PreOp v${VERSAO} aberto (${CONFIG.modos[estado.modo].nome}).`);
+  log(`SLC PreOp v${VERSAO} aberto (${modoNome()}${CONFIG.simulacao ? ", SIMULAÇÃO" : ""}).`);
   render();
+  executar();
 })();
 }

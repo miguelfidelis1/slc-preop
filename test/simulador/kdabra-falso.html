@@ -133,7 +133,9 @@
 
   $("#filtrar_busca").onclick = () => {
     const b = { cam: $("#truckInput").value, leva: $("#waveInput").value, imp: $("#printedInput").value };
-    if (window.__congelar && b.cam === "c" + window.__congelar) return carregar(() => {}); // não redesenha
+    // Tabela "presa": a busca não redesenha. Com __congelarSoNaImpressao, só depois da 1ª impressão.
+    if (window.__congelar && b.cam === "c" + window.__congelar && (!window.__congelarSoNaImpressao || window.__impressoes.length))
+      return carregar(() => {});
     ultimaBusca = b;
     carregar(desenhar);
   };
