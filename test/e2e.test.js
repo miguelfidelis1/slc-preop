@@ -10,7 +10,7 @@ const RAIZ = path.join(__dirname, "..");
 const SIMULADOR = "file://" + path.join(__dirname, "simulador", "kdabra-falso.html");
 const codigo = (arquivo) => fs.readFileSync(path.join(RAIZ, "src", arquivo), "utf8");
 // Tempos curtos só para o teste andar rápido.
-const TEMPOS = { aposSelecionar: 30, estabilizar: 50, intervalo: 60, semResposta: 1500, aposFinalizar: 100 };
+const TEMPOS = { aposSelecionar: 30, estabilizar: 50, intervalo: 60, semResposta: 1500, aposFinalizar: 100, esperaJanelaImpressao: 500 };
 
 let browser;
 before(async () => {
@@ -167,5 +167,48 @@ test("tabela paginada no servidor (como o KDABRA): imprime os pedidos de todas a
   const g = await grupos(page);
   assert.equal(g["40A"].situacao, "IMPRESSO", "40A tem 13 pedidos: todos lidos, não só os 10 da 1ª página");
   assert.deepEqual(page.erros, []);
+  await page.close();
+});
+
+// Sem o ALMA, o KDABRA abre a janela de impressão do Chrome a cada Finalizar e a página fica
+// travada até a pessoa clicar em Imprimir ou Cancelar.
+async function testarJanela(params) {
+  const page = await abrir({ params, config: { tempos: { ...TEMPOS, esperaJanelaImpressao: 6000, limiteBusca: 2000 } } });
+  assert.deepEqual(await impressos(page), ORDEM);
+  const ev = await page.evaluate(() => window.__eventos);
+  const finalizacoes = ev.filter((e) => e.tipo === "finalizar").length;
+  assert.equal(ev.filter((e) => e.tipo === "janela-abre").length, finalizacoes, "uma janela por Finalizar");
+  // Depois de cada Finalizar, a próxima coisa é a janela — o script não busca o próximo caminhão antes.
+  ev.forEach((e, i) => {
+    if (e.tipo !== "finalizar") return;
+    const prox = ev.slice(i + 1).find((x) => x.tipo !== "finalizar");
+    assert.equal(prox && prox.tipo, "janela-abre", "esperou a janela de impressão antes de seguir");
+  });
+  // Assim que a janela fecha, já vai para o próximo caminhão (sem conferência no meio).
+  const esperas = ev
+    .map((e, i) => (e.tipo === "janela-fecha" ? (ev.slice(i + 1).find((x) => x.tipo === "buscar") || {}).t - e.t : null))
+    .filter((x) => x != null && !Number.isNaN(x));
+  assert.ok(Math.max(...esperas) < 2500, "próximo caminhão logo depois de fechar a janela: " + esperas.join(", ") + " ms");
+  // Janela aberta mais tempo que o limite da busca não vira "o KDABRA demorou".
+  const g = await grupos(page);
+  assert.ok(Object.values(g).every((x) => !x.erro), "nenhum caminhão com erro");
+  assert.ok(Object.values(g).every((x) => x.naoConf === 0), "conferência no fim confirmou tudo");
+  const log = await page.evaluate(() => window.__SLC_PREOP__.estado.logs.join("\n"));
+  assert.doesNotMatch(log, /imprime direto/);
+  assert.deepEqual(page.erros, []);
+  await page.close();
+}
+
+test("janela de impressão do Chrome: espera confirmar/cancelar e vai direto para o próximo", () =>
+  testarJanela("janela=3000&atrasoJanela=2500"));
+
+test("janela de impressão sem eventos beforeprint/afterprint (detecta pela pausa da página)", () =>
+  testarJanela("janela=2500&atrasoJanela=1800&semEventos=1"));
+
+test("sem janela de impressão (ALMA imprimindo direto): não fica esperando", async () => {
+  const page = await abrir();
+  const log = await page.evaluate(() => window.__SLC_PREOP__.estado.logs.join("\n"));
+  assert.match(log, /imprime direto/);
+  assert.equal((log.match(/imprime direto/g) || []).length, 1, "só espera no 1º caminhão");
   await page.close();
 });

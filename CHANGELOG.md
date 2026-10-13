@@ -9,6 +9,8 @@
 - **Corrige pedidos "não impressos" que ficavam para trás**: a tabela do KDABRA é paginada no servidor, e o script só via a primeira página. Agora, depois de cada busca, ele pede todas as linhas numa página só (`linhasPorPagina`).
 - Prioridade: 299A → 299H → demais 299 → 100HA–124HA → A → B → C.
 - **Capas CHECK CAMINHÃO no Fresh**: no fim da execução, imprime uma capa por caminhão impresso, reproduzindo a Planilha1 da CHECK CAMINHAO FRESH NOVO célula por célula (logo, larguras, alturas, bordas, moldura, 27 linhas), com a rota no formato 60645, numa única janela de impressão. Botão para imprimir de novo e botão para copiar os dados para a própria planilha.
+- **Janela de impressão do Chrome**: depois do Finalizar, espera você clicar em Imprimir ou Cancelar e vai direto para o próximo caminhão. Se o computador imprime direto (sem janela), percebe no 1º caminhão e não espera. O tempo com a janela aberta não conta mais como "o KDABRA demorou".
+- Conferência das impressões passou para o fim da execução, para não atrasar a troca de caminhão.
 - Log mostra, para cada caminhão lido, quantos pedidos estão não impressos, 7d+, impressos e pendentes.
 - **Conferência pós-impressão**: busca o caminhão de novo e avisa pedidos que não ficaram como impressos.
 - Proteção contra tabela presa no caminhão anterior, contra linhas de outro caminhão e contra marcação que não confere. O caminhão com problema é pulado e listado no aviso final.

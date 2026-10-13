@@ -97,6 +97,8 @@
       limiteBusca: 45000, // tempo máximo esperando uma busca
       aposFinalizar: 1000,
       intervalo: 250, // de quanto em quanto tempo confere a tabela
+      esperaJanelaImpressao: 6000, // quanto espera a janela de impressão do Chrome aparecer depois do Finalizar
+      folgaImpressao: 700, // depois que a janela fecha, espera isso para ver se o KDABRA abre outra
     },
   };
 
@@ -472,9 +474,23 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
     disparar(sel, "input", "change");
   }
 
+  // Relógio que só conta o tempo "ativo". Enquanto a janela de impressão do Chrome (ou um
+  // alert) está aberta a página fica parada; esse tempo não pode virar "o KDABRA demorou".
+  function cronometro() {
+    let ativo = 0;
+    let ultimo = Date.now();
+    return () => {
+      const agora = Date.now();
+      const d = agora - ultimo;
+      ultimo = agora;
+      ativo += d > 2000 ? T.intervalo : d;
+      return ativo;
+    };
+  }
+
   async function esperarOpcao(sel, valor, ms = 3000) {
-    const fim = Date.now() + ms;
-    while (Date.now() < fim) {
+    const decorrido = cronometro();
+    while (decorrido() < ms) {
       if ([...sel.options].some((o) => o.value === valor)) return true;
       await sleep(100);
     }
@@ -561,13 +577,13 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
   // Devolve `mudou: false` quando a tabela ficou igual à de antes da busca,
   // o que serve para detectar tabela "presa" no caminhão anterior.
   async function esperarTabela(antes, obs) {
-    const inicio = Date.now();
+    const decorrido = cronometro();
     let viuLoader = false;
     let ultima = null;
     let estavel = 0;
     await sleep(Math.min(150, T.intervalo));
     try {
-      while (Date.now() - inicio < T.limiteBusca) {
+      while (decorrido() < T.limiteBusca) {
         if (carregando()) {
           viuLoader = true;
           estavel = 0;
@@ -580,7 +596,7 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
         const mudou = a !== antes;
         const respondeu = viuLoader || mudou || (obs && obs.mutou);
         if (respondeu && estavel >= 2) return { ok: true, mudou };
-        if (!respondeu && Date.now() - inicio > T.semResposta) return { ok: true, mudou: false };
+        if (!respondeu && decorrido() > T.semResposta) return { ok: true, mudou: false };
         await sleep(T.intervalo);
       }
       return { ok: false, mudou: assinatura() !== antes };
@@ -679,6 +695,91 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
   }
 
   const contarMarcados = () => linhasTabela().filter(linhaMarcada).length;
+
+  // ---------- Janela de impressão do Chrome ----------
+  // Sem o ALMA, o KDABRA imprime pela janela de impressão do Chrome. O script espera você
+  // clicar em Imprimir ou Cancelar e só então vai para o próximo caminhão.
+  // Detecta a janela por beforeprint/afterprint (na página, em iframes e em janelas abertas)
+  // e também pela pausa da página enquanto a janela fica aberta.
+  const impressao = { abertas: 0, vistas: 0, fechouEm: 0 };
+  let imprimeDireto = false; // descoberto no 1º caminhão: nenhuma janela aparece (ex.: ALMA imprimindo direto)
+
+  function vigiarJanela(w) {
+    try {
+      if (!w || w.__slcPreopVigiada) return;
+      w.__slcPreopVigiada = true;
+      w.addEventListener("beforeprint", () => {
+        impressao.abertas++;
+        impressao.vistas++;
+      });
+      w.addEventListener("afterprint", () => {
+        impressao.abertas = Math.max(0, impressao.abertas - 1);
+        impressao.fechouEm = Date.now();
+      });
+    } catch (e) {} // janela de outro site: fica só a detecção pela pausa
+  }
+
+  function vigiarImpressoes() {
+    vigiarJanela(window);
+    const iframe = (f) => {
+      vigiarJanela(f.contentWindow);
+      f.addEventListener("load", () => vigiarJanela(f.contentWindow));
+    };
+    document.querySelectorAll("iframe").forEach(iframe);
+    new MutationObserver((ms) =>
+      ms.forEach((m) =>
+        m.addedNodes.forEach((n) => {
+          if (n.tagName === "IFRAME") iframe(n);
+          else if (n.querySelectorAll) n.querySelectorAll("iframe").forEach(iframe);
+        })
+      )
+    ).observe(document.documentElement, { childList: true, subtree: true });
+    const abrirOriginal = window.open;
+    if (typeof abrirOriginal === "function" && !abrirOriginal.__slcPreop) {
+      const abrir = function (...args) {
+        const w = abrirOriginal.apply(this, args);
+        vigiarJanela(w);
+        try {
+          if (w) w.addEventListener("load", () => vigiarJanela(w));
+        } catch (e) {}
+        return w;
+      };
+      abrir.__slcPreop = true;
+      window.open = abrir;
+    }
+  }
+
+  async function aguardarJanelaImpressao(nome) {
+    if (imprimeDireto) return;
+    setStatus(`🖨️ ${nome}: confirme ou cancele na janela de impressão — depois vai para o próximo caminhão`);
+    const antes = impressao.vistas;
+    const decorrido = cronometro();
+    let ultimo = Date.now();
+    for (;;) {
+      await sleep(100);
+      const agora = Date.now();
+      if (agora - ultimo > 1000) {
+        // A página ficou parada: a janela de impressão esteve aberta e acabou de fechar.
+        impressao.vistas++;
+        impressao.fechouEm = agora;
+      }
+      ultimo = agora;
+      const viu = impressao.vistas > antes;
+      if (viu && impressao.abertas === 0 && agora - impressao.fechouEm >= T.folgaImpressao) return;
+      if (!viu && decorrido() > T.esperaJanelaImpressao) {
+        if (antes === 0) {
+          imprimeDireto = true;
+          log("Nenhuma janela de impressão apareceu: este computador imprime direto. Seguindo sem esperar.");
+        }
+        return;
+      }
+    }
+  }
+
+  async function esperarCarregar(ms = 15000) {
+    const decorrido = cronometro();
+    while (carregando() && decorrido() < ms) await sleep(T.intervalo);
+  }
 
   async function confirmarDialogos() {
     let vazias = 0;
@@ -925,6 +1026,7 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
     fase("imprimir", alvo.length);
     let simulados = 0;
     let naoConfirmados = 0;
+    const paraConferir = [];
     let ultimaId = null;
     for (const g of alvo) {
       if (estado.parar) break;
@@ -968,8 +1070,14 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
         const obs = observarTabela();
         elementos().finalizar.click();
         await confirmarDialogos();
-        await esperarTabela(antes, obs);
-        await sleep(T.aposFinalizar);
+        await aguardarJanelaImpressao(g.nome);
+        if (imprimeDireto) {
+          await esperarTabela(antes, obs);
+          await sleep(T.aposFinalizar);
+        } else {
+          obs.parar();
+          await esperarCarregar();
+        }
 
         const hoje = dataBR(new Date());
         for (const p of marcados) {
@@ -981,23 +1089,44 @@ td{padding:0 2px;white-space:nowrap;overflow:hidden;vertical-align:bottom;line-h
         copiar(tsv(estado.registros)).catch(() => {});
         log(`${g.nome}: ${marcados.length} pedido(s) impressos.`);
 
-        if (CONFIG.conferirAposImprimir) {
-          setStatus(`Conferindo ${g.nome}`);
-          const r2 = await buscar(g.consulta);
-          const depois = new Map(doGrupo(g, r2.pedidos).map((p) => [chave(p.pedido), p]));
-          g.naoConfirmados = marcados.filter((p) => !depois.has(chave(p.pedido)) || depois.get(chave(p.pedido)).classe !== "IMPRESSO").map((p) => p.pedido);
-          if (r2.ok) atualizarPedidos(g, [...depois.values()]);
-          if (g.naoConfirmados.length) {
-            naoConfirmados += g.naoConfirmados.length;
-            log(`${g.nome}: ATENÇÃO — ${g.naoConfirmados.length} pedido(s) não aparecem como impressos: ${g.naoConfirmados.join(", ")}`);
-          }
-        }
+        g.enviados = marcados.map((p) => p.pedido);
+        paraConferir.push(g);
       } catch (e) {
         g.erro = e.message;
         log(`${g.nome}: ERRO — ${e.message}`);
       } finally {
         estado.progresso.feito++;
         agendarRender();
+      }
+    }
+
+    // Conferência no fim: busca de novo cada caminhão impresso e confere se o KDABRA
+    // registrou a impressão. Fica no fim para não atrasar a passagem entre caminhões.
+    if (CONFIG.conferirAposImprimir && paraConferir.length && !estado.parar) {
+      fase("conferir", paraConferir.length);
+      let anterior = null;
+      for (const g of paraConferir) {
+        if (estado.parar) break;
+        setStatus(`Conferindo ${g.nome}`);
+        try {
+          const id = idConsulta(g.consulta);
+          let r2 = await buscar(g.consulta);
+          if (!r2.mudou && r2.pedidos.length && anterior && anterior !== id) r2 = await buscar(g.consulta);
+          if (!r2.ok || (!r2.mudou && r2.pedidos.length && anterior && anterior !== id)) throw new Error("a tabela não atualizou");
+          anterior = id;
+          const depois = new Map(doGrupo(g, r2.pedidos).map((p) => [chave(p.pedido), p]));
+          g.naoConfirmados = g.enviados.filter((ped) => !depois.has(chave(ped)) || depois.get(chave(ped)).classe !== "IMPRESSO");
+          atualizarPedidos(g, [...depois.values()]);
+          if (g.naoConfirmados.length) {
+            naoConfirmados += g.naoConfirmados.length;
+            log(`${g.nome}: ATENÇÃO — ${g.naoConfirmados.length} pedido(s) não aparecem como impressos: ${g.naoConfirmados.join(", ")}`);
+          }
+        } catch (e) {
+          log(`${g.nome}: não consegui conferir (${e.message}).`);
+        } finally {
+          estado.progresso.feito++;
+          agendarRender();
+        }
       }
     }
 
@@ -1322,7 +1451,12 @@ tr.cam:hover td{background:#1b1e23}
     campo("status").textContent = estado.status;
     let etapa = "";
     if (rodando) {
-      etapa = estado.rodando === "mapear" ? "Etapa 1 de 2 · lendo caminhões" : `Etapa 2 de 2 · ${CONFIG.simulacao ? "simulando" : "imprimindo"}`;
+      etapa =
+        estado.rodando === "mapear"
+          ? "Etapa 1 de 3 · lendo caminhões"
+          : estado.rodando === "conferir"
+            ? "Etapa 3 de 3 · conferindo as impressões"
+            : `Etapa 2 de 3 · ${CONFIG.simulacao ? "simulando" : "imprimindo"}`;
       if (pr.total) etapa += ` · ${pr.feito}/${pr.total}`;
       if (pr.feito > 0 && pr.total > pr.feito) {
         const s = Math.round((((Date.now() - pr.inicio) / pr.feito) * (pr.total - pr.feito)) / 1000);
@@ -1448,6 +1582,7 @@ tr.cam:hover td{background:#1b1e23}
     },
   };
 
+  vigiarImpressoes();
   restaurarExecucao();
   log(`SLC PreOp v${VERSAO} aberto (${modoNome()}${CONFIG.simulacao ? ", SIMULAÇÃO" : ""}).`);
   render();

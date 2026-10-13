@@ -13,6 +13,9 @@
     ?colunas=novas    → colunas da tabela em outra ordem
     ?atraso=400       → tempo (ms) que cada busca demora
     ?poucos=1         → só os caminhões que têm pedidos (testes mais rápidos)
+    ?janela=3000      → depois do Finalizar abre uma "janela de impressão" (como o KDABRA sem o ALMA):
+                        a página fica travada por 3000 ms, como enquanto a pessoa não clica em Imprimir/Cancelar.
+                        &atrasoJanela=2500 → quanto tempo depois do Finalizar ela abre; &semEventos=1 → sem beforeprint/afterprint.
     ?paginado=10      → tabela DataTables paginada NO SERVIDOR (só a página atual fica na tela),
                         como o KDABRA real. Precisa do `npm install` (usa jQuery e DataTables de node_modules).
   No console: window.__congelar = "210" faz a busca do caminhão 210 não atualizar a tabela.
@@ -72,6 +75,19 @@
   const COLUNAS_NOVAS = url.get("colunas") === "novas";
   const POUCOS = url.get("poucos") === "1";
   const PAGINADO = +(url.get("paginado") || 0);
+  const JANELA = +(url.get("janela") || 0);
+  const ATRASO_JANELA = +(url.get("atrasoJanela") || 300);
+  const SEM_EVENTOS = url.get("semEventos") === "1";
+  window.__eventos = [];
+  // Imita a janela de impressão do Chrome: trava a página até a pessoa clicar.
+  function janelaDeImpressao() {
+    window.__eventos.push({ tipo: "janela-abre", t: Date.now() });
+    if (!SEM_EVENTOS) window.dispatchEvent(new Event("beforeprint"));
+    const fim = Date.now() + JANELA;
+    while (Date.now() < fim) {} // página travada, como no Chrome
+    if (!SEM_EVENTOS) window.dispatchEvent(new Event("afterprint"));
+    window.__eventos.push({ tipo: "janela-fecha", t: Date.now() });
+  }
 
   const dia = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toLocaleDateString("pt-BR"); };
   const amanha = dia(-1);
@@ -161,6 +177,7 @@
 
   $("#filtrar_busca").onclick = () => {
     const b = { cam: $("#truckInput").value, leva: $("#waveInput").value, imp: $("#printedInput").value };
+    window.__eventos.push({ tipo: "buscar", t: Date.now() });
     // Tabela "presa": a busca não redesenha. Com __congelarSoNaImpressao, só depois da 1ª impressão.
     if (window.__congelar && b.cam === "c" + window.__congelar && (!window.__congelarSoNaImpressao || window.__impressoes.length))
       return carregar(() => {});
@@ -179,7 +196,9 @@
       p.impressao = dia(0);
       window.__impressoes.push(p.caminhao + p.leva + ":" + p.pedido);
     }
+    window.__eventos.push({ tipo: "finalizar", t: Date.now() });
     carregar(desenhar);
+    if (JANELA) setTimeout(janelaDeImpressao, ATRASO_JANELA);
   };
   document.querySelectorAll(".itens_type_btn").forEach((b) => (b.onclick = () => {
     document.querySelectorAll(".itens_type_btn").forEach((x) => x.classList.toggle("active", x === b));

@@ -10,8 +10,9 @@ Painel em JavaScript para a pré-operação do **KDABRA Checkout**, aberto por u
 
 1. Lê **todos os caminhões** do filtro da tela, buscando só as **levas que cada caminhão usa** (1–99 → A/B, 100–149 → HA, 299 → A…Z e AA…AI etc.). Não testa as 32 levas em todo caminhão.
 2. Imprime, na ordem de prioridade, os pedidos **não impressos** ou **impressos há 7 dias ou mais**.
-3. Confere se o KDABRA registrou cada impressão.
-4. Copia os pedidos impressos para a **Impressos V2**. No final aparece o aviso: é só abrir a planilha e apertar **Ctrl+V**.
+3. Quando o KDABRA abre a **janela de impressão do Chrome** (computador sem o ALMA), o script espera você clicar em **Imprimir** ou **Cancelar** e só então vai para o próximo caminhão, na hora. Se o computador imprime direto, sem janela, ele percebe no 1º caminhão e não fica esperando.
+4. No fim, confere se o KDABRA registrou cada impressão.
+5. Copia os pedidos impressos para a **Impressos V2**. No final aparece o aviso: é só abrir a planilha e apertar **Ctrl+V**.
 
 No **Fresh**, no fim da execução abre também a impressão das **capas CHECK CAMINHÃO**: uma folha por caminhão impresso, com os pedidos que acabaram de sair. A capa reproduz a Planilha1 da **CHECK CAMINHAO FRESH NOVO** célula por célula (logo, título, tabela de 27 linhas, moldura, fiscal responsável e horário fim), com a rota no formato da "rota fórmula" (60645). É só escolher a impressora e clicar em Imprimir. O botão **🖨️ Imprimir capas** imprime de novo, se precisar.
 
