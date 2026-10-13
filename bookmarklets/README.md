@@ -31,3 +31,19 @@ Os favoritos acima pegam sempre o que está na `main`. Para a operação só mud
 ```js
 javascript:(()=>{fetch("https://cdn.jsdelivr.net/gh/miguelfidelis1/slc-preop@v2.0.0/src/mercearia.js").then(r=>r.text()).then(t=>Function(t)()).catch(e=>alert("Erro ao carregar Mercearia: "+e))})()
 ```
+
+## Versão de teste (branch)
+
+Carregam a versão que ainda está em teste na branch `claude/slc-preop-enhancement-djyjkk`, sem mexer na `main`. Os favoritos de cima continuam abrindo a versão da `main`.
+
+### Mercearia (teste)
+
+```js
+javascript:(()=>{fetch("https://raw.githubusercontent.com/miguelfidelis1/slc-preop/claude/slc-preop-enhancement-djyjkk/src/mercearia.js?v="+Date.now()).then(r=>r.text()).then(t=>Function(t)()).catch(e=>alert("Erro ao carregar Mercearia (teste): "+e))})()
+```
+
+### Fresh (teste)
+
+```js
+javascript:(()=>{fetch("https://raw.githubusercontent.com/miguelfidelis1/slc-preop/claude/slc-preop-enhancement-djyjkk/src/fresh.js?v="+Date.now()).then(r=>r.text()).then(t=>Function(t)()).catch(e=>alert("Erro ao carregar Fresh (teste): "+e))})()
+```
