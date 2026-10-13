@@ -2,7 +2,7 @@
 
 Crie um favorito no navegador e cole o código abaixo no campo **URL**. São os mesmos da v1: quem já tem os favoritos não precisa trocar nada.
 
-Os dois abrem o mesmo painel. A única diferença é o modo inicial, e dá para trocar no próprio painel. Os arquivos [`mercearia-loader.txt`](mercearia-loader.txt) e [`fresh-loader.txt`](fresh-loader.txt) têm o mesmo código.
+Cada favorito abre o SLC PreOp no seu modo (Mercearia ou Fresh) e já começa a imprimir. Os arquivos [`mercearia-loader.txt`](mercearia-loader.txt) e [`fresh-loader.txt`](fresh-loader.txt) têm o mesmo código.
 
 ## Mercearia
 
