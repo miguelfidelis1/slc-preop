@@ -61,6 +61,19 @@ Outros: o que não casar com nenhuma regra
 
 Dentro de cada regra, a ordem é numérica (1A, 2A, …, 60A).
 
+## Capa CHECK CAMINHÃO (só Fresh)
+
+No fim de cada execução do Fresh, o painel imprime uma capa por caminhão que teve pedido impresso naquela execução, mesmo que o caminhão já tivesse pedidos impressos antes. A capa lista os pedidos que acabaram de ser impressos, na ordem de impressão:
+
+| Coluna | Conteúdo |
+|---|---|
+| CAMINHÃO | ex.: 7A |
+| ROTA | "Rota fórmula" da planilha: 1º caractere + o que vem depois do traço (`6.0001.001-0645` → `60645`) |
+| NÚMERO PEDIDO | número do pedido |
+| CHECK / MAPEADO? | em branco, para marcar à mão |
+
+A tabela tem 30 linhas, como na planilha. No rodapé ficam Fiscal responsável e Horário fim.
+
 ## Fora da fila
 
 ```txt

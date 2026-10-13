@@ -132,3 +132,33 @@ test("nomes de hoje (100HA, 299AA, 152KB) entram na prioridade certa", () => {
   assert.equal(grupo("101HA").prioridade.grupo, "MAX");
   assert.equal(grupo("299AA").prioridade.grupo, "MAX");
 });
+
+test("capa: rota no formato da planilha (ROTA FORMULA)", () => {
+  assert.equal(L.rotaCapa("6.0001.001-0645"), "60645");
+  assert.equal(L.rotaCapa("6.0002.002-0655"), "60655");
+  assert.equal(L.rotaCapa("Rota 10"), "Rota 10");
+});
+
+test("capa: uma por caminhão, na ordem de impressão, com os pedidos impressos", () => {
+  const capas = L.montarCapas([
+    { caminhao: "299A", rota: "6.0299.001-0001", pedido: "P1" },
+    { caminhao: "1A", rota: "6.0001.001-0645", pedido: "P2" },
+    { caminhao: "299A", rota: "6.0299.001-0002", pedido: "P3" },
+  ]);
+  assert.deepEqual(capas.map((c) => c.caminhao), ["299A", "1A"]);
+  assert.deepEqual(capas[0].linhas.map((l) => [l.rota, l.pedido]), [["60001", "P1"], ["60002", "P3"]]);
+
+  const html = L.htmlCapas(capas);
+  assert.equal((html.match(/<section class="capa">/g) || []).length, 2);
+  assert.match(html, /CHECK CAMINHÃO 299A/);
+  assert.match(html, /FISCAL RESPONSÁVEL/);
+  assert.match(html, /HORÁRIO FIM/);
+  // Completa até 30 linhas, como a planilha (2 pedidos + 28 vazias no 299A).
+  const folha299 = html.split('<section class="capa">')[1];
+  assert.equal((folha299.match(/<tr>/g) || []).length, 1 + 30);
+});
+
+test("capa: escapa HTML vindo da tela", () => {
+  const html = L.htmlCapas(L.montarCapas([{ caminhao: "<b>1A</b>", rota: "x", pedido: "<img>" }]));
+  assert.ok(!html.includes("<img>") && html.includes("&lt;img&gt;"));
+});

@@ -82,6 +82,8 @@ test("clicou no favorito: imprime tudo na ordem de prioridade e copia", async ()
   }
   assert.equal(g["3001Z"], undefined, "fora da fila nem é lido");
 
+  assert.equal(await page.evaluate(() => !!document.getElementById("slc-preop-capas")), false, "Mercearia não imprime capa");
+  assert.equal(await page.locator('#slc-preop-v2 [data-acao="capas"]').isHidden(), true);
   if (process.env.SCREENSHOT) await page.screenshot({ path: path.join(RAIZ, "docs", "img", "painel.png") });
 
   // Clicar no favorito de novo: roda de novo (como na v1), não imprime nada repetido
@@ -130,6 +132,29 @@ test("favorito Fresh imprime no modo Fresh", async () => {
   const page = await abrir({ arquivo: "fresh.js" });
   assert.equal(await page.evaluate(() => document.querySelector(".itens_type_btn.active").dataset.modo), "fresh");
   assert.deepEqual(await impressos(page), ["299AA", "7A", "7A"]);
+
+  // Fresh: capas CHECK CAMINHÃO abrem sozinhas no fim, uma por caminhão impresso.
+  const capas = () =>
+    page.evaluate(() => {
+      const d = document.getElementById("slc-preop-capas").contentDocument;
+      return [...d.querySelectorAll(".capa")].map((c) => ({
+        titulo: c.querySelector("h1").textContent,
+        linhas: [...c.querySelectorAll("tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent.trim())).filter((l) => l[0]),
+      }));
+    });
+  await page.waitForFunction(() => document.getElementById("slc-preop-capas")?.contentDocument?.querySelector(".capa"));
+  const lista = await capas();
+  assert.deepEqual(lista.map((c) => c.titulo), ["CHECK CAMINHÃO 299AA", "CHECK CAMINHÃO 7A"]);
+  assert.equal(lista[1].linhas.length, 2);
+  assert.match(lista[1].linhas[0][1], /^6\d{4}$/, "rota no formato da planilha (ex.: 60645)");
+  assert.match(page.alertas.at(-1), /impressão das capas/);
+
+  // Botão para imprimir de novo as capas.
+  await page.locator("#slc-preop-v2 summary").click();
+  await page.locator('#slc-preop-v2 [data-acao="capas"]').click();
+  assert.equal(await page.locator('#slc-preop-v2 [data-campo="nCapas"]').textContent(), "2");
+  assert.equal((await capas()).length, 2);
+  assert.deepEqual(page.erros, []);
   await page.close();
 });
 

@@ -13,6 +13,10 @@ Painel em JavaScript para a pré-operação do **KDABRA Checkout**, aberto por u
 3. Confere se o KDABRA registrou cada impressão.
 4. Copia os pedidos impressos para a **Impressos V2**. No final aparece o aviso: é só abrir a planilha e apertar **Ctrl+V**.
 
+No **Fresh**, no fim da execução abre também a impressão das **capas CHECK CAMINHÃO**: uma folha por caminhão impresso, com os pedidos que acabaram de sair (caminhão, rota no formato 60645, nº do pedido, check, mapeado?, fiscal responsável e horário fim). É só escolher a impressora e clicar em Imprimir. Substitui a planilha CHECK CAMINHAO FRESH NOVO, sem precisar copiar e colar. O botão **🖨️ Imprimir capas** imprime de novo, se precisar.
+
+<img src="docs/img/capa.png" alt="Exemplo de capa CHECK CAMINHÃO (dados inventados)" width="320">
+
 Se a planilha não colar nada, clique em **📋 Copiar para Impressos V2** no painel. A última impressão fica guardada no navegador, então dá para copiar de novo mesmo depois de recarregar a página.
 
 - **⏹ Parar** interrompe depois do caminhão atual, nunca no meio de um.
@@ -79,6 +83,7 @@ Quase tudo fica no bloco `CONFIG` no topo de `src/slc-preop.js`:
 
 - `seletores`: IDs dos filtros, da tabela e dos botões;
 - `colunas`: nomes dos cabeçalhos da tabela (as colunas são achadas pelo nome, não pela posição);
+- `capa`: em quais modos imprime a capa (hoje só Fresh), se abre sozinha no fim e quantas linhas a tabela tem;
 - `levasPorCaminhao`: quais levas cada faixa de caminhão usa (se surgir um caminhão novo numa faixa nova, é aqui que se adiciona);
 - `PRIORIDADES` e `foraDaFila`: ordem de impressão;
 - `tempos`: esperas;

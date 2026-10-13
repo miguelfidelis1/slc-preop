@@ -91,7 +91,7 @@
     DADOS[modo] = [];
     for (const [cam, leva, ...sits] of lista)
       sits.forEach((s, i) => DADOS[modo].push({
-        caminhao: cam, leva, rota: "Rota " + (10 + i), pedido: String(seq++),
+        caminhao: cam, leva, rota: "6.000" + (i + 1) + ".00" + (i + 1) + "-" + String(seq % 10000).padStart(4, "0"), pedido: String(seq++),
         entrega: s === "P" ? "Pedido pendente" : amanha,
         impressao: s === "N" || s === "P" ? "Não foi impresso" : dia(s),
       }));

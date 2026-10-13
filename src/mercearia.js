@@ -37,6 +37,13 @@ const SLC_PREOP_MODO = "mercearia";
     // A tabela do KDABRA é paginada no servidor (só a página atual fica na tela).
     // Depois de cada busca o script pede páginas deste tamanho, para ver todos os pedidos.
     linhasPorPagina: 1000,
+    // Capa "CHECK CAMINHÃO" (mesma da planilha CHECK CAMINHAO FRESH NOVO): uma folha por
+    // caminhão impresso na execução, com os pedidos que acabaram de ser impressos.
+    capa: {
+      modos: ["fresh"], // só no Fresh
+      automatica: true, // abre a impressão das capas sozinha no fim da execução
+      linhasMinimas: 30, // a tabela da planilha tem 30 linhas
+    },
     // true = marca e confere os pedidos, mas NÃO clica em Finalizar (para testar).
     simulacao: false,
     // Como descobrir os caminhões:
@@ -283,12 +290,70 @@ const SLC_PREOP_MODO = "mercearia";
   const tsv = (registros) =>
     registros.map((x) => [x.caminhao, x.rota, x.pedido, x.entrega, x.impressao].map(limpar).join("\t")).join("\n");
 
+  const escHtml = (s) =>
+    String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+  // Rota da capa = "ROTA FORMULA" da planilha: 1º caractere + o que vem depois do traço.
+  // Ex.: "6.0001.001-0645" → "60645". Sem traço, fica como está.
+  const rotaCapa = (rota) => {
+    const r = limpar(rota);
+    const i = r.indexOf("-");
+    return i >= 0 ? r.charAt(0) + r.slice(i + 1) : r;
+  };
+
+  // Agrupa os pedidos impressos por caminhão, na ordem em que foram impressos.
+  function montarCapas(registros) {
+    const porCaminhao = new Map();
+    for (const x of registros) {
+      const cam = limpar(x.caminhao);
+      if (!porCaminhao.has(cam)) porCaminhao.set(cam, { caminhao: cam, linhas: [] });
+      porCaminhao.get(cam).linhas.push({ caminhao: cam, rota: rotaCapa(x.rota), pedido: limpar(x.pedido) });
+    }
+    return [...porCaminhao.values()];
+  }
+
+  // Página de impressão com uma folha A4 por caminhão (layout da planilha CHECK CAMINHÃO).
+  function htmlCapas(capas) {
+    const e = escHtml;
+    const vazia = "<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>";
+    const folha = (c) => `<section class="capa">
+<h1>CHECK CAMINHÃO ${e(c.caminhao)}</h1>
+<table>
+<thead><tr><th>CAMINHÃO</th><th>ROTA</th><th>NÚMERO PEDIDO</th><th>CHECK</th><th>MAPEADO?</th></tr></thead>
+<tbody>${c.linhas.map((l) => `<tr><td>${e(l.caminhao)}</td><td>${e(l.rota)}</td><td>${e(l.pedido)}</td><td></td><td></td></tr>`).join("")}${vazia.repeat(Math.max(0, CONFIG.capa.linhasMinimas - c.linhas.length))}</tbody>
+</table>
+<div class="rodape">
+<div><span class="campo"></span><b>FISCAL RESPONSÁVEL</b></div>
+<div><span class="campo hora">_______:_______</span><b>HORÁRIO FIM</b></div>
+</div>
+</section>`;
+    return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>CHECK CAMINHÃO</title><style>
+@page{size:A4 portrait;margin:10mm 12mm}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{margin:0;font:12px Arial,sans-serif;color:#000;background:#fff}
+.capa{break-after:page;page-break-after:always}
+.capa:last-child{break-after:auto;page-break-after:auto}
+h1{margin:6mm 0 5mm;text-align:center;font-size:22px}
+table{width:100%;border-collapse:collapse}
+thead{display:table-header-group}
+tr{break-inside:avoid}
+th,td{border:1px solid #000;padding:3px 6px;height:20px;text-align:center}
+th{background:#e6e6e6;color:#000;font-size:11px;border-width:2px}
+th:nth-child(3),td:nth-child(3){width:34%}
+.rodape{display:flex;gap:20mm;margin-top:12mm}
+.rodape div{flex:1;text-align:center}
+.campo{display:block;height:20px;margin-bottom:4px;border-bottom:1px solid #000}
+.campo.hora{border:0;font-size:14px}
+</style></head><body>${capas.map(folha).join("")}</body></html>`;
+  }
+
   const csv = (linhas) =>
     linhas.map((l) => l.map((v) => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"').join(";")).join("\r\n");
 
   const LOGICA = {
     VERSAO, CONFIG, PRIORIDADES, foraDaFila, norm, chave, parseData, diasDesde, classificarPedido,
     identificar, levasPara, prioridade, ordenarGrupos, resumir, detectarColunas, tsv, csv, dataBR,
+    rotaCapa, montarCapas, htmlCapas,
   };
   if (typeof document === "undefined") {
     if (typeof module !== "undefined") module.exports = LOGICA;
@@ -928,8 +993,14 @@ const SLC_PREOP_MODO = "mercearia";
         `Pedidos impressos/copiados para Impressos V2: ${n}\nReimpressos 7+d: ${rep}\n` +
         (erros ? `\n⚠️ Caminhões com erro (não impressos): ${alvo.filter((g) => g.erro).map((g) => g.nome).join(", ")}\n` : "") +
         (naoConfirmados ? `\n⚠️ Pedidos que não apareceram como impressos: ${naoConfirmados} (veja no painel)\n` : "") +
-        (n ? (copiou ? "\nAgora abre a planilha e aperta Ctrl+V." : "\nClique em “Copiar para Impressos V2” no painel e cole na planilha.") : "")
+        (n ? (copiou ? "\nAgora abre a planilha e aperta Ctrl+V." : "\nClique em “Copiar para Impressos V2” no painel e cole na planilha.") : "") +
+        (n && CONFIG.capa.modos.includes(estado.modo)
+          ? CONFIG.capa.automatica
+            ? "\n\n🖨️ Em seguida abre a impressão das capas (CHECK CAMINHÃO)."
+            : "\n\n🖨️ Clique em “Imprimir capas” no painel."
+          : "")
     );
+    if (n && CONFIG.capa.automatica && CONFIG.capa.modos.includes(estado.modo)) imprimirCapas();
   }
 
   // ============================================================
@@ -953,7 +1024,38 @@ const SLC_PREOP_MODO = "mercearia";
   };
 
   const situacaoTexto = (g) => (g.erro ? "Erro: " + g.erro : g.fora ? "Fora da fila" : SITUACOES[g.resumo.situacao].rotulo);
-  const registrosParaCopiar = () => (estado.registros.length ? estado.registros : estado.anterior ? estado.anterior.registros : []);
+  // A execução atual, ou a última guardada no navegador (para copiar / imprimir capas depois).
+  const execucaoGuardada = () => (estado.registros.length ? { modo: estado.modo, registros: estado.registros } : estado.anterior);
+  const registrosParaCopiar = () => (execucaoGuardada() ? execucaoGuardada().registros : []);
+  const capasDisponiveis = () => {
+    const ex = execucaoGuardada();
+    return ex && CONFIG.capa.modos.includes(ex.modo) ? montarCapas(ex.registros) : [];
+  };
+
+  // Imprime as capas por um iframe escondido: uma janela de impressão para todas.
+  function imprimirCapas() {
+    const capas = capasDisponiveis();
+    if (!capas.length) return setStatus("Nenhuma capa para imprimir (as capas são só do Fresh).");
+    const velho = document.getElementById("slc-preop-capas");
+    if (velho) velho.remove();
+    const fr = document.createElement("iframe");
+    fr.id = "slc-preop-capas";
+    fr.title = "Capas CHECK CAMINHÃO";
+    fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none";
+    fr.onload = () => {
+      try {
+        fr.contentWindow.focus();
+        fr.contentWindow.print();
+      } catch (e) {
+        log("Não consegui abrir a impressão das capas: " + e.message);
+      }
+    };
+    fr.srcdoc = htmlCapas(capas);
+    document.body.appendChild(fr);
+    const msg = `Capas de ${capas.length} caminhão(ões) enviadas para impressão: ${capas.map((c) => c.caminhao).join(", ")}.`;
+    setStatus(msg);
+    log(msg);
+  }
 
   async function copiarRegistros() {
     const regs = registrosParaCopiar();
@@ -1051,6 +1153,8 @@ button:hover:not(:disabled){background:#343944}
 .copiar{background:#1f8f4e;border-color:#1f8f4e;color:#fff;font-weight:600}
 .copiar:hover:not(:disabled){background:#1a7a43}
 .perigo{background:#c94040;border-color:#c94040;color:#fff}
+.capas{width:100%;background:#3b6ef5;border-color:#3b6ef5;color:#fff;font-weight:600}
+.capas:hover:not(:disabled){background:#2f5fe0}
 details{border-top:1px solid #2c3038;padding-top:8px}
 summary{cursor:pointer;color:#aab1bd;user-select:none}
 .mais{display:flex;flex-direction:column;gap:8px;margin-top:8px}
@@ -1103,6 +1207,7 @@ tr.cam:hover td{background:#1b1e23}
       <button class="copiar" data-acao="copiarTsv">📋 <span data-campo="copiarTxt">Copiar para Impressos V2</span></button>
       <button data-acao="rodar" title="Rodar de novo">↻ Rodar de novo</button>
     </div>
+    <button class="capas" data-acao="capas" hidden>🖨️ Imprimir capas (<span data-campo="nCapas">0</span> caminhões)</button>
     <details data-campo="detalhes">
       <summary>Caminhões (<span data-campo="nCam">0</span>) e mais opções</summary>
       <div class="mais">
@@ -1134,7 +1239,7 @@ tr.cam:hover td{background:#1b1e23}
 
   const q = (s) => raiz.querySelector(s);
   const campo = (n) => raiz.querySelector(`[data-campo="${n}"]`);
-  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const esc = escHtml;
 
   function tagsGrupo(g) {
     const t = [];
@@ -1202,6 +1307,9 @@ tr.cam:hover td{background:#1b1e23}
         ? `Copiar última impressão (${hora(estado.anterior.quando)}, ${regs.length})`
         : `Copiar para Impressos V2 (${regs.length})`;
     q('[data-acao="copiarTsv"]').disabled = !regs.length;
+    const nCapas = rodando ? 0 : capasDisponiveis().length;
+    q('[data-acao="capas"]').hidden = !nCapas;
+    campo("nCapas").textContent = nCapas;
 
     campo("nCam").textContent = grupos.length;
     if (campo("detalhes").open) {
@@ -1244,6 +1352,7 @@ tr.cam:hover td{background:#1b1e23}
         estado.parar = true;
         setStatus("Parando depois do caminhão atual…");
       } else if (a === "rodar") executar();
+      else if (a === "capas") imprimirCapas();
       else if (a === "copiarTsv") copiarRegistros();
       else if (a === "copiarResumo") copiarResumo();
       else if (a === "relatorio") baixarRelatorio();
