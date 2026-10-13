@@ -115,8 +115,9 @@ test("só busca as levas da faixa do caminhão (sem 1AA, 2AH…)", () => {
   assert.deepEqual(L.levasPara("205", LEVAS_FILTRO).levas, ["A", "H"]);
   assert.deepEqual(L.levasPara("301", LEVAS_FILTRO).levas, ["A", "H"]);
   const l299 = L.levasPara("299", LEVAS_FILTRO).levas;
-  assert.equal(l299.length, 25);
-  assert.ok(!l299.includes("A") && !l299.includes("B") && !l299.includes("HA"));
+  assert.equal(l299.length, 28); // 19 letras que existem no filtro + AA–AI
+  assert.ok(["A", "B", "H", "J", "Z", "AA", "AI"].every((x) => l299.includes(x)));
+  assert.ok(!["HA", "KA", "KB", "NC"].some((x) => l299.includes(x)));
   // Sem faixa: busca todas, e avisa.
   assert.deepEqual(L.levasPara("R", LEVAS_FILTRO), { levas: LEVAS_FILTRO, porFaixa: false });
   assert.equal(L.levasPara("450", LEVAS_FILTRO).porFaixa, false);
@@ -125,8 +126,8 @@ test("só busca as levas da faixa do caminhão (sem 1AA, 2AH…)", () => {
 });
 
 test("nomes de hoje (100HA, 299AA, 152KB) entram na prioridade certa", () => {
-  assert.deepEqual(ordem(["5B", "152KB", "302H", "205A", "299J", "299AA", "101HA", "1A", "150KA"]), [
-    "101HA", "299AA", "299J", "150KA", "1A", "205A", "302H", "152KB", "5B",
+  assert.deepEqual(ordem(["5B", "152KB", "302H", "205A", "299AA", "299J", "299H", "101HA", "1A", "299B", "150KA", "299A", "299AB", "299Z"]), [
+    "299A", "299H", "101HA", "299B", "299J", "299Z", "299AA", "299AB", "150KA", "1A", "205A", "302H", "152KB", "5B",
   ]);
   assert.equal(grupo("101HA").prioridade.grupo, "MAX");
   assert.equal(grupo("299AA").prioridade.grupo, "MAX");

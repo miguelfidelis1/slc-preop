@@ -51,27 +51,27 @@ const grupos = (page) =>
     )
   );
 
-// Ordem esperada: 101HA (100HA–124HA) → 299AA (299 demais) → 205A (200A/H) → 302H (300A/H) → 450A (novo A)
+// Ordem esperada: 299A → 101HA (100HA–124HA) → 299AA (299 demais; 299J já impresso) → 205A (200A/H) → 302H (300A/H) → 450A (novo A)
 // → 152KB (reimpressão 7d+) → 5B. 3001Z fica fora da fila; 299J e 5A já estão impressos; 150KA só tem pendente.
-const ORDEM = ["101HA", "101HA", "299AA", "299AA", "299AA", "205A", "302H", "450A", "450A", "152KB", "5B"];
+const ORDEM = ["299A", "101HA", "101HA", "299AA", "299AA", "299AA", "205A", "302H", "450A", "450A", "152KB", "5B"];
 
 test("clicou no favorito: imprime tudo na ordem de prioridade e copia", async () => {
   const page = await abrir();
   assert.equal(await page.evaluate(() => window.__SLC_PREOP__.estado.estrategia), "porCombinacao");
   assert.deepEqual(await impressos(page), ORDEM);
-  // Só as levas da faixa: 1 e 2 → A,B; 5 → A,B; 101 → HA; 150/152 → KA,KB; 205/302 → A,H; 299 → 25; 450 sem faixa → 32.
+  // Só as levas da faixa: 1 e 2 → A,B; 5 → A,B; 101 → HA; 150/152 → KA,KB; 205/302 → A,H; 299 → 28; 450 sem faixa → 32.
   const log = await page.evaluate(() => window.__SLC_PREOP__.estado.logs.join("\n"));
   assert.match(log, /Sem faixa .*: 450/);
-  assert.match(log, /\b72 buscas no total/);
+  assert.match(log, /\b75 buscas no total/);
   assert.match(log, /1 caminhão\(ões\) fora da fila não lidos/);
 
   const reg = await page.evaluate(() => window.__SLC_PREOP__.estado.registros);
-  assert.equal(reg.length, 11);
-  assert.equal(new Set(reg.map((r) => r.pedido)).size, 11, "sem pedido repetido");
+  assert.equal(reg.length, 12);
+  assert.equal(new Set(reg.map((r) => r.pedido)).size, 12, "sem pedido repetido");
   const hoje = await page.evaluate(() => new Date().toLocaleDateString("pt-BR"));
   assert.ok(reg.every((r) => r.impressao === hoje));
   assert.equal(reg.filter((r) => r.reimpressao).length, 2);
-  assert.match(page.alertas.at(-1), /Finalizado[\s\S]*Impressos V2: 11[\s\S]*Reimpressos 7\+d: 2/);
+  assert.match(page.alertas.at(-1), /Finalizado[\s\S]*Impressos V2: 12[\s\S]*Reimpressos 7\+d: 2/);
 
   const g = await grupos(page);
   for (const [nome, x] of Object.entries(g)) {
@@ -86,11 +86,11 @@ test("clicou no favorito: imprime tudo na ordem de prioridade e copia", async ()
   // Clicar no favorito de novo: roda de novo (como na v1), não imprime nada repetido
   // e o botão de copiar continua com a última impressão.
   await favorito(page);
-  assert.equal((await impressos(page)).length, 11);
+  assert.equal((await impressos(page)).length, 12);
   assert.equal(await page.evaluate(() => document.querySelectorAll("#slc-preop-v2").length), 1);
   assert.match(page.alertas.at(-1), /Nenhum pedido imprimível/);
   const botao = await page.locator('#slc-preop-v2 [data-campo="copiarTxt"]').textContent();
-  assert.match(botao, /Copiar última impressão \(\d\d:\d\d, 11\)/);
+  assert.match(botao, /Copiar última impressão \(\d\d:\d\d, 12\)/);
 
   assert.deepEqual(page.erros, []);
   await page.close();
@@ -110,7 +110,7 @@ test("tabela presa: pula o caminhão e não imprime nada errado", async () => {
   assert.match(g["205A"].erro, /não atualizou/);
   const lista = await impressos(page);
   assert.deepEqual(lista, ORDEM.filter((x) => x !== "205A"));
-  assert.equal(new Set(await page.evaluate(() => window.__impressoes)).size, 10, "nada impresso duas vezes");
+  assert.equal(new Set(await page.evaluate(() => window.__impressoes)).size, 11, "nada impresso duas vezes");
   assert.match(page.alertas.at(-1), /Caminhões com erro \(não impressos\): 205A/);
   await page.close();
 });

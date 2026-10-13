@@ -53,11 +53,8 @@ const SLC_PREOP_MODO = "fresh";
       { de: 150, ate: 179, levas: ["KA", "KB"] },
       { de: 180, ate: 199, levas: ["NC"] },
       { de: 200, ate: 298, levas: ["A", "H"] },
-      {
-        de: 299,
-        ate: 299,
-        levas: ["AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "J", "K", "L", "M", "N", "O", "P", "Q", "S", "T", "U", "V", "W", "X", "Y", "Z"],
-      },
+      // 299: todas as letras de A a Z (as que existirem no filtro) e depois AA–AI.
+      { de: 299, ate: 299, levas: [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI"] },
       { de: 300, ate: 399, levas: ["H", "A"] },
     ],
     modos: {
@@ -116,7 +113,7 @@ const SLC_PREOP_MODO = "fresh";
     { grupo: "MAX", tipo: "299A", nomes: ["299A"] },
     { grupo: "MAX", tipo: "299H", nomes: ["299H"] },
     { grupo: "MAX", tipo: "100HA–124HA", se: (c) => ["H", "HA"].includes(c.leva) && entre(c.num, 100, 124) },
-    { grupo: "MAX", tipo: "299 demais", se: (c) => c.num === "299" },
+    { grupo: "MAX", tipo: "299 demais (B…Z, depois AA…AI)", se: (c) => c.num === "299" },
     { grupo: "A", tipo: "RA / RH / HA", nomes: ["RA", "RH", "HA"] },
     { grupo: "A", tipo: "150–179 KA", se: (c) => c.leva === "KA" && entre(c.num, 150, 179) },
     { grupo: "A", tipo: "Original A (1–99)", se: (c) => c.leva === "A" && entre(c.num, 1, 99) },
@@ -227,6 +224,7 @@ const SLC_PREOP_MODO = "fresh";
         a.prioridade.ordem - b.prioridade.ordem ||
         a.prioridade.sub - b.prioridade.sub ||
         compararNatural(a.num, b.num) ||
+        a.leva.length - b.leva.length || // leva de uma letra antes da de duas (299Z antes de 299AA)
         compararNatural(a.leva, b.leva)
     );
   }

@@ -19,11 +19,11 @@ O filtro Leva do KDABRA tem 32 opções fixas e não tem "Todos". Para não test
 | 150–179 | KA, KB |
 | 180–199 | NC |
 | 200–298 | A, H |
-| 299 | AA–AI, J–Z |
+| 299 | A–Z (as letras que existirem no filtro) e AA–AI |
 | 300–399 | H, A |
 | Outros | todas as levas (mais lento, avisa no Log) |
 
-Com os 84 caminhões de hoje são cerca de 170 buscas, contra 2.688 testando todas as combinações.
+Com os 84 caminhões de hoje são cerca de 175 buscas, contra 2.688 testando todas as combinações.
 
 ## Situação de cada pedido
 
@@ -52,7 +52,7 @@ Com os 84 caminhões de hoje são cerca de 170 buscas, contra 2.688 testando tod
 MAX: 1. 299A
      2. 299H
      3. 100HA até 124HA
-     4. Demais 299 (299AA … 299AI, 299J … 299Z)
+     4. Demais 299: primeiro as levas de uma letra (299B … 299Z), depois as de duas (299AA … 299AI)
 A:   RA, RH, HA → 150–179 KA → 1–99 A → 200–298 A/H → 300–399 A/H → caminhões novos de leva A/H/HA/KA
 B:   RB, HB, 150KB → 150–179 KB → 1–99 B → 100B → 180–199 NC → caminhões novos de leva B/KB/NC
 C:   RC, DC, 200C, KC, 100C → caminhões novos de leva C
