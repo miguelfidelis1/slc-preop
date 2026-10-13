@@ -8,6 +8,23 @@ As regras ficam em `src/slc-preop.js`, no bloco `CONFIG` e nas listas `PRIORIDAD
 Impresso = Todos
 ```
 
+## Levas de cada caminhão
+
+O filtro Leva do KDABRA tem 32 opções fixas e não tem "Todos". Para não testar todas em cada caminhão, o script só busca as levas da faixa do caminhão (`levasPorCaminhao`, tirado da planilha Impressos V2):
+
+| Caminhões | Levas buscadas |
+|---|---|
+| 1–99 | A, B |
+| 100–149 | HA |
+| 150–179 | KA, KB |
+| 180–199 | NC |
+| 200–298 | A, H |
+| 299 | AA–AI, J–Z |
+| 300–399 | H, A |
+| Outros | todas as levas (mais lento, avisa no Log) |
+
+Com os 84 caminhões de hoje são cerca de 170 buscas, contra 2.688 testando todas as combinações.
+
 ## Situação de cada pedido
 
 | Situação | Quando | Imprime? |
@@ -34,10 +51,10 @@ Impresso = Todos
 ```txt
 MAX: 1. 299A
      2. 299H
-     3. 100H até 124H
-     4. Demais 299
-A:   RA, RH, HA → 150–154 KA → 1–60 A → 200–210 A/H → 300–310 A/H → caminhões novos de leva A/H/KA
-B:   RB, HB, 150KB → 1–60 B → 100B → 180–184 NC → caminhões novos de leva B/KB/NC
+     3. 100HA até 124HA
+     4. Demais 299 (299AA … 299AI, 299J … 299Z)
+A:   RA, RH, HA → 150–179 KA → 1–99 A → 200–298 A/H → 300–399 A/H → caminhões novos de leva A/H/HA/KA
+B:   RB, HB, 150KB → 150–179 KB → 1–99 B → 100B → 180–199 NC → caminhões novos de leva B/KB/NC
 C:   RC, DC, 200C, KC, 100C → caminhões novos de leva C
 Outros: o que não casar com nenhuma regra
 ```
@@ -50,4 +67,4 @@ Dentro de cada regra, a ordem é numérica (1A, 2A, …, 60A).
 Caminhões 3000 em diante (ex.: 3000Z)
 ```
 
-Aparecem na lista do painel para conferência, mas não são impressos.
+Não são lidos nem impressos.

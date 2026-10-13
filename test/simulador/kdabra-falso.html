@@ -9,7 +9,7 @@
   Serve para testar o SLC PreOp sem tocar no sistema real.
 
   Parâmetros na URL:
-    ?levaTodos=0      → o filtro Leva não tem a opção "Todos"
+    ?levaTodos=1      → o filtro Leva ganha a opção "Todos" (o KDABRA real não tem)
     ?colunas=novas    → colunas da tabela em outra ordem
     ?atraso=400       → tempo (ms) que cada busca demora
     ?poucos=1         → só os caminhões que têm pedidos (testes mais rápidos)
@@ -64,7 +64,7 @@
 (() => {
   const url = new URLSearchParams(location.search);
   const ATRASO = +(url.get("atraso") || 400);
-  const LEVA_TODOS = url.get("levaTodos") !== "0";
+  const LEVA_TODOS = url.get("levaTodos") === "1";
   const COLUNAS_NOVAS = url.get("colunas") === "novas";
   const POUCOS = url.get("poucos") === "1";
 
@@ -74,11 +74,11 @@
   // [caminhão, leva, ...situações] — N = não impresso, P = pendente, número = impresso há N dias
   const BASE = {
     mercearia: [
-      ["299", "A", "N", "N", "N", 0], ["299", "H", 0, 0], ["101", "H", "N", 10, "P"], ["5", "A", 3, 3],
-      ["5", "B", "N"], ["R", "C", 8], ["400", "A", "N", "N"], ["402", "C", "N", 0], ["150", "KA", "P"],
-      ["3001", "Z", "N", "N"], ["210", "H", "N"],
+      ["299", "AA", "N", "N", "N", 0], ["299", "J", 0, 0], ["101", "HA", "N", 10, "P"], ["5", "A", 3, 3],
+      ["5", "B", "N"], ["152", "KB", 8], ["450", "A", "N", "N"], ["150", "KA", "P"],
+      ["3001", "Z", "N", "N"], ["205", "A", "N", 0], ["302", "H", "N"],
     ],
-    fresh: [["299", "A", "N"], ["7", "A", "N", "N"], ["401", "B", 1], ["60", "B", "P"]],
+    fresh: [["299", "AA", "N"], ["7", "A", "N", "N"], ["41", "B", 1], ["50", "B", "P"]],
   };
   const DADOS = {};
   for (const [modo, lista] of Object.entries(BASE)) {
@@ -95,8 +95,9 @@
   window.__congelar = null;
 
   const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String(a + i));
-  const TODOS_CAMINHOES = ["299", ...range(100, 124), "R", "H", "D", "K", ...range(1, 60), ...range(150, 154), ...range(180, 184), ...range(200, 210), ...range(300, 310), ...range(400, 405), "3001"];
-  const LEVAS = ["A", "H", "B", "C", "KA", "KB", "NC", "Z"];
+  // Parecido com o KDABRA real: 84 caminhões e 32 levas fixas.
+  const TODOS_CAMINHOES = [...range(1, 52), ...range(100, 111), ...range(150, 153), "180", "184", ...range(200, 206), "299", ...range(300, 302), "450", "3000", "3001"];
+  const LEVAS = ["A", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "B", "H", "HA", "J", "K", "KA", "KB", "L", "M", "N", "NC", "O", "P", "Q", "S", "T", "U", "V", "W", "X", "Y", "Z"];
   let modo = "mercearia";
 
   const $ = (s) => document.querySelector(s);

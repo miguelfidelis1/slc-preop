@@ -34,9 +34,26 @@
     //   "auto"          → usa Leva = Todos se existir (1 busca por caminhão),
     //                     senão busca cada combinação caminhão × leva.
     //   "porCaminhao"   → 1 busca por caminhão com Leva = Todos.
-    //   "porCombinacao" → 1 busca por combinação caminhão × leva.
+    //   "porCombinacao" → 1 busca por combinação caminhão × leva, usando só as
+    //                     levas de `levasPorCaminhao` (é o caso do KDABRA hoje).
     //   "tudo"          → 1 busca só, com Caminhão = Todos e Leva = Todos.
     varredura: "auto",
+    // Levas que cada faixa de caminhão usa (tirado da planilha Impressos V2).
+    // O script só busca essas combinações, sem testar as 32 levas em todo caminhão.
+    // Caminhão fora de todas as faixas: busca todas as levas (mais lento) e avisa no Log.
+    levasPorCaminhao: [
+      { de: 1, ate: 99, levas: ["A", "B"] },
+      { de: 100, ate: 149, levas: ["HA"] },
+      { de: 150, ate: 179, levas: ["KA", "KB"] },
+      { de: 180, ate: 199, levas: ["NC"] },
+      { de: 200, ate: 298, levas: ["A", "H"] },
+      {
+        de: 299,
+        ate: 299,
+        levas: ["AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "J", "K", "L", "M", "N", "O", "P", "Q", "S", "T", "U", "V", "W", "X", "Y", "Z"],
+      },
+      { de: 300, ate: 399, levas: ["H", "A"] },
+    ],
     modos: {
       mercearia: { nome: "Mercearia", botao: "mercearia" },
       fresh: { nome: "Fresh", botao: "fresh" },
@@ -80,7 +97,7 @@
   const ajustes = typeof window !== "undefined" && window.SLC_PREOP_CONFIG;
   if (ajustes) {
     Object.assign(CONFIG.tempos, ajustes.tempos || {});
-    ["reprintDias", "conferirAposImprimir", "varredura", "simulacao"].forEach((k) => {
+    ["reprintDias", "conferirAposImprimir", "varredura", "simulacao", "levasPorCaminhao"].forEach((k) => {
       if (k in ajustes) CONFIG[k] = ajustes[k];
     });
   }
@@ -92,18 +109,19 @@
   const PRIORIDADES = [
     { grupo: "MAX", tipo: "299A", nomes: ["299A"] },
     { grupo: "MAX", tipo: "299H", nomes: ["299H"] },
-    { grupo: "MAX", tipo: "100H–124H", se: (c) => c.leva === "H" && entre(c.num, 100, 124) },
+    { grupo: "MAX", tipo: "100HA–124HA", se: (c) => ["H", "HA"].includes(c.leva) && entre(c.num, 100, 124) },
     { grupo: "MAX", tipo: "299 demais", se: (c) => c.num === "299" },
     { grupo: "A", tipo: "RA / RH / HA", nomes: ["RA", "RH", "HA"] },
-    { grupo: "A", tipo: "150–154 KA", se: (c) => c.leva === "KA" && entre(c.num, 150, 154) },
-    { grupo: "A", tipo: "Original A (1–60)", se: (c) => c.leva === "A" && entre(c.num, 1, 60) },
-    { grupo: "A", tipo: "200A / 200H", se: (c) => ["A", "H"].includes(c.leva) && entre(c.num, 200, 210) },
-    { grupo: "A", tipo: "300A / 300H", se: (c) => ["A", "H"].includes(c.leva) && entre(c.num, 300, 310) },
-    { grupo: "A", tipo: "Novo · leva A/H/KA", se: (c) => ["A", "H", "KA"].includes(c.leva) },
+    { grupo: "A", tipo: "150–179 KA", se: (c) => c.leva === "KA" && entre(c.num, 150, 179) },
+    { grupo: "A", tipo: "Original A (1–99)", se: (c) => c.leva === "A" && entre(c.num, 1, 99) },
+    { grupo: "A", tipo: "200A / 200H", se: (c) => ["A", "H"].includes(c.leva) && entre(c.num, 200, 298) },
+    { grupo: "A", tipo: "300A / 300H", se: (c) => ["A", "H"].includes(c.leva) && entre(c.num, 300, 399) },
+    { grupo: "A", tipo: "Novo · leva A/H/HA/KA", se: (c) => ["A", "H", "HA", "KA"].includes(c.leva) },
     { grupo: "B", tipo: "RB / HB / 150KB", nomes: ["RB", "HB", "150KB"] },
-    { grupo: "B", tipo: "Original B (1–60)", se: (c) => c.leva === "B" && entre(c.num, 1, 60) },
+    { grupo: "B", tipo: "150–179 KB", se: (c) => c.leva === "KB" && entre(c.num, 150, 179) },
+    { grupo: "B", tipo: "Original B (1–99)", se: (c) => c.leva === "B" && entre(c.num, 1, 99) },
     { grupo: "B", tipo: "100B", nomes: ["100B"] },
-    { grupo: "B", tipo: "Leva noturna NC", se: (c) => c.leva === "NC" && entre(c.num, 180, 184) },
+    { grupo: "B", tipo: "Leva noturna NC", se: (c) => c.leva === "NC" && entre(c.num, 180, 199) },
     { grupo: "B", tipo: "Novo · leva B/KB/NC", se: (c) => ["B", "KB", "NC"].includes(c.leva) },
     { grupo: "C", tipo: "RC / DC / 200C / KC / 100C", nomes: ["RC", "DC", "200C", "KC", "100C"] },
     { grupo: "C", tipo: "Novo · leva C", se: (c) => c.leva === "C" },
@@ -164,6 +182,16 @@
     return d >= reprintDias ? "REIMPRIMIR" : "IMPRESSO";
   }
   const IMPRIMIVEL = ["NAO_IMPRESSO", "REIMPRIMIR"];
+
+  // Levas a buscar para um caminhão: as da faixa dele que existem no filtro.
+  // Sem faixa → todas as levas do filtro (porFaixa: false).
+  function levasPara(caminhao, levasDoFiltro, faixas = CONFIG.levasPorCaminhao) {
+    const k = chave(caminhao);
+    const f = /^\d+$/.test(k) ? faixas.find((x) => +k >= x.de && +k <= x.ate) : null;
+    if (!f) return { levas: [...levasDoFiltro], porFaixa: false };
+    const quer = new Set(f.levas.map(chave));
+    return { levas: levasDoFiltro.filter((l) => quer.has(chave(l))), porFaixa: true };
+  }
 
   // Separa "299A" em { num: "299", leva: "A" }, de preferência usando as opções
   // reais dos filtros Caminhão e Leva da tela.
@@ -253,7 +281,7 @@
 
   const LOGICA = {
     VERSAO, CONFIG, PRIORIDADES, foraDaFila, norm, chave, parseData, diasDesde, classificarPedido,
-    identificar, prioridade, ordenarGrupos, resumir, detectarColunas, tsv, csv, dataBR,
+    identificar, levasPara, prioridade, ordenarGrupos, resumir, detectarColunas, tsv, csv, dataBR,
   };
   if (typeof document === "undefined") {
     if (typeof module !== "undefined") module.exports = LOGICA;
@@ -458,16 +486,19 @@
     const E = elementos();
     if (E.faltando.length) throw new Error("Elementos não encontrados na tela: " + E.faltando.join(", "));
     const antes = assinatura();
-    selecionar(E.caminhao, consulta.caminhao.value);
-    await sleep(T.aposSelecionar);
-    if (consulta.leva) {
-      // A lista de levas pode recarregar depois de trocar o caminhão.
+    // Só troca o filtro que mudou: cada troca faz o KDABRA recarregar a tabela.
+    if (E.caminhao.value !== consulta.caminhao.value) {
+      selecionar(E.caminhao, consulta.caminhao.value);
+      await sleep(T.aposSelecionar);
+    }
+    if (consulta.leva && E.leva.value !== consulta.leva.value) {
       await esperarOpcao(E.leva, consulta.leva.value);
       selecionar(E.leva, consulta.leva.value);
       await sleep(T.aposSelecionar);
     }
     const todos = lerOpcoes(E.impresso).todos;
-    selecionar(E.impresso, todos ? todos.value : "0");
+    const valorTodos = todos ? todos.value : "0";
+    if (E.impresso.value !== valorTodos) selecionar(E.impresso, valorTodos);
     desligarItens();
     E.buscar.disabled = false;
     const obs = observarTabela();
@@ -476,6 +507,7 @@
     await sleep(T.estabilizar);
     return { ok: r.ok, mudou: r.mudou, pedidos: lerTabela() };
   }
+
 
   const caixaDaLinha = (row) => [...row.querySelectorAll("input[type='checkbox']")].find((x) => x.id !== S.checkAllId);
   const linhaMarcada = (row) => {
@@ -667,23 +699,28 @@
     const info = { nums: cams.lista.map((o) => o.text), levas: levas.lista.map((o) => o.text) };
     log(`${modoNome()}: ${cams.lista.length} caminhões e ${levas.lista.length} levas no filtro (leitura: ${estrategia}).`);
 
+    // Caminhões fora da fila (3000+) nem são lidos.
+    const naFila = cams.lista.filter((c) => !foraDaFila({ num: chave(c.text), leva: "" }));
+    if (naFila.length < cams.lista.length) log(`${cams.lista.length - naFila.length} caminhão(ões) fora da fila não lidos.`);
+
     const consultas = [];
-    if (estrategia === "tudo") consultas.push({ caminhao: cams.todos, leva: levas.todos });
-    else if (estrategia === "porCaminhao") cams.lista.forEach((c) => consultas.push({ caminhao: c, leva: levas.todos }));
-    else cams.lista.forEach((c) => consultas.push({ caminhao: c, leva: null })); // levas expandidas abaixo
+    if (estrategia === "tudo") consultas.push([{ caminhao: cams.todos, leva: levas.todos }]);
+    else if (estrategia === "porCaminhao") naFila.forEach((c) => consultas.push([{ caminhao: c, leva: levas.todos }]));
+    else {
+      const semFaixa = [];
+      for (const c of naFila) {
+        const r = levasPara(c.text, levas.lista.map((l) => l.text));
+        if (!r.porFaixa) semFaixa.push(c.text);
+        consultas.push(r.levas.map((t) => ({ caminhao: c, leva: levas.lista.find((l) => l.text === t) })));
+      }
+      if (semFaixa.length) log(`Sem faixa em levasPorCaminhao (busca todas as levas, mais lento): ${semFaixa.join(", ")}`);
+      log(`${consultas.reduce((s, x) => s + x.length, 0)} buscas no total.`);
+    }
     estado.progresso.total = consultas.length;
 
     let ultimaId = null;
-    for (const base of consultas) {
+    for (const subconsultas of consultas) {
       if (estado.parar) break;
-      const subconsultas = [];
-      if (estrategia === "porCombinacao") {
-        // Lê as levas depois de escolher o caminhão (a lista pode ser filtrada pelo sistema).
-        selecionar(E.caminhao, base.caminhao.value);
-        await sleep(T.aposSelecionar + T.intervalo);
-        lerOpcoes(elementos().leva).lista.forEach((l) => subconsultas.push({ caminhao: base.caminhao, leva: l }));
-      } else subconsultas.push(base);
-
       for (const c of subconsultas) {
         if (estado.parar) break;
         const rotulo = estrategia === "porCombinacao" ? c.caminhao.text + c.leva.text : c.caminhao.text;

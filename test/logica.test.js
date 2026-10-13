@@ -103,3 +103,31 @@ test("TSV no formato da Impressos V2", () => {
 test("CSV escapa aspas e usa ponto e vírgula", () => {
   assert.equal(L.csv([["a", 'b"c'], [1, null]]), '"a";"b""c"\r\n"1";""');
 });
+
+const LEVAS_FILTRO = ["A", "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "B", "H", "HA", "J", "K", "KA", "KB", "L", "M", "N", "NC", "O", "P", "Q", "S", "T", "U", "V", "W", "X", "Y", "Z"];
+
+test("só busca as levas da faixa do caminhão (sem 1AA, 2AH…)", () => {
+  assert.deepEqual(L.levasPara("1", LEVAS_FILTRO), { levas: ["A", "B"], porFaixa: true });
+  assert.deepEqual(L.levasPara("52", LEVAS_FILTRO).levas, ["A", "B"]);
+  assert.deepEqual(L.levasPara("101", LEVAS_FILTRO).levas, ["HA"]);
+  assert.deepEqual(L.levasPara("152", LEVAS_FILTRO).levas, ["KA", "KB"]);
+  assert.deepEqual(L.levasPara("184", LEVAS_FILTRO).levas, ["NC"]);
+  assert.deepEqual(L.levasPara("205", LEVAS_FILTRO).levas, ["A", "H"]);
+  assert.deepEqual(L.levasPara("301", LEVAS_FILTRO).levas, ["A", "H"]);
+  const l299 = L.levasPara("299", LEVAS_FILTRO).levas;
+  assert.equal(l299.length, 25);
+  assert.ok(!l299.includes("A") && !l299.includes("B") && !l299.includes("HA"));
+  // Sem faixa: busca todas, e avisa.
+  assert.deepEqual(L.levasPara("R", LEVAS_FILTRO), { levas: LEVAS_FILTRO, porFaixa: false });
+  assert.equal(L.levasPara("450", LEVAS_FILTRO).porFaixa, false);
+  // Leva que não existe no filtro é ignorada.
+  assert.deepEqual(L.levasPara("1", ["A"]).levas, ["A"]);
+});
+
+test("nomes de hoje (100HA, 299AA, 152KB) entram na prioridade certa", () => {
+  assert.deepEqual(ordem(["5B", "152KB", "302H", "205A", "299J", "299AA", "101HA", "1A", "150KA"]), [
+    "101HA", "299AA", "299J", "150KA", "1A", "205A", "302H", "152KB", "5B",
+  ]);
+  assert.equal(grupo("101HA").prioridade.grupo, "MAX");
+  assert.equal(grupo("299AA").prioridade.grupo, "MAX");
+});

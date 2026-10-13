@@ -51,14 +51,19 @@ const grupos = (page) =>
     )
   );
 
-// Ordem esperada: 299A → 101H (100H–124H) → 210H (200A/H) → 400A (novo A) → 5B → RC (reimpressão 7d+) → 402C (novo C).
-// 3001Z fica fora da fila; 299H e 5A já estão impressos; 150KA só tem pendente.
-const ORDEM = ["299A", "299A", "299A", "101H", "101H", "210H", "400A", "400A", "5B", "RC", "402C"];
+// Ordem esperada: 101HA (100HA–124HA) → 299AA (299 demais) → 205A (200A/H) → 302H (300A/H) → 450A (novo A)
+// → 152KB (reimpressão 7d+) → 5B. 3001Z fica fora da fila; 299J e 5A já estão impressos; 150KA só tem pendente.
+const ORDEM = ["101HA", "101HA", "299AA", "299AA", "299AA", "205A", "302H", "450A", "450A", "152KB", "5B"];
 
 test("clicou no favorito: imprime tudo na ordem de prioridade e copia", async () => {
   const page = await abrir();
-  assert.equal(await page.evaluate(() => window.__SLC_PREOP__.estado.estrategia), "porCaminhao");
+  assert.equal(await page.evaluate(() => window.__SLC_PREOP__.estado.estrategia), "porCombinacao");
   assert.deepEqual(await impressos(page), ORDEM);
+  // Só as levas da faixa: 1 e 2 → A,B; 5 → A,B; 101 → HA; 150/152 → KA,KB; 205/302 → A,H; 299 → 25; 450 sem faixa → 32.
+  const log = await page.evaluate(() => window.__SLC_PREOP__.estado.logs.join("\n"));
+  assert.match(log, /Sem faixa .*: 450/);
+  assert.match(log, /\b72 buscas no total/);
+  assert.match(log, /1 caminhão\(ões\) fora da fila não lidos/);
 
   const reg = await page.evaluate(() => window.__SLC_PREOP__.estado.registros);
   assert.equal(reg.length, 11);
@@ -74,7 +79,7 @@ test("clicou no favorito: imprime tudo na ordem de prioridade e copia", async ()
     assert.equal(x.naoConf, 0, nome);
     if (!x.fora && x.situacao !== "SO_PENDENTES") assert.equal(x.situacao, "IMPRESSO", nome);
   }
-  assert.equal(g["3001Z"].aImprimir, 2, "fora da fila não é impresso");
+  assert.equal(g["3001Z"], undefined, "fora da fila nem é lido");
 
   if (process.env.SCREENSHOT) await page.screenshot({ path: path.join(RAIZ, "docs", "img", "painel.png") });
 
@@ -91,22 +96,22 @@ test("clicou no favorito: imprime tudo na ordem de prioridade e copia", async ()
   await page.close();
 });
 
-test("sem Leva = Todos e com colunas em outra ordem", async () => {
-  const page = await abrir({ params: "levaTodos=0&colunas=novas" });
-  assert.equal(await page.evaluate(() => window.__SLC_PREOP__.estado.estrategia), "porCombinacao");
+test("com Leva = Todos e com colunas em outra ordem", async () => {
+  const page = await abrir({ params: "levaTodos=1&colunas=novas" });
+  assert.equal(await page.evaluate(() => window.__SLC_PREOP__.estado.estrategia), "porCaminhao");
   assert.deepEqual(await impressos(page), ORDEM);
   assert.deepEqual(page.erros, []);
   await page.close();
 });
 
 test("tabela presa: pula o caminhão e não imprime nada errado", async () => {
-  const page = await abrir({ antes: () => ((window.__congelar = "210"), (window.__congelarSoNaImpressao = true)) });
+  const page = await abrir({ antes: () => ((window.__congelar = "205"), (window.__congelarSoNaImpressao = true)) });
   const g = await grupos(page);
-  assert.match(g["210H"].erro, /não atualizou/);
+  assert.match(g["205A"].erro, /não atualizou/);
   const lista = await impressos(page);
-  assert.deepEqual(lista, ORDEM.filter((x) => x !== "210H"));
+  assert.deepEqual(lista, ORDEM.filter((x) => x !== "205A"));
   assert.equal(new Set(await page.evaluate(() => window.__impressoes)).size, 10, "nada impresso duas vezes");
-  assert.match(page.alertas.at(-1), /Caminhões com erro \(não impressos\): 210H/);
+  assert.match(page.alertas.at(-1), /Caminhões com erro \(não impressos\): 205A/);
   await page.close();
 });
 
@@ -114,9 +119,8 @@ test("simulação (config) não imprime nada", async () => {
   const page = await abrir({ config: { simulacao: true } });
   assert.deepEqual(await impressos(page), []);
   const g = await grupos(page);
-  assert.equal(g["299A"].sim, 3);
-  assert.equal(g["RC"].sim, 1);
-  assert.equal(g["3001Z"].sim, 0);
+  assert.equal(g["299AA"].sim, 3);
+  assert.equal(g["152KB"].sim, 1);
   assert.equal(await page.evaluate(() => document.querySelectorAll("#table_body input:checked").length), 0);
   await page.close();
 });
@@ -124,6 +128,6 @@ test("simulação (config) não imprime nada", async () => {
 test("favorito Fresh imprime no modo Fresh", async () => {
   const page = await abrir({ arquivo: "fresh.js" });
   assert.equal(await page.evaluate(() => document.querySelector(".itens_type_btn.active").dataset.modo), "fresh");
-  assert.deepEqual(await impressos(page), ["299A", "7A", "7A"]);
+  assert.deepEqual(await impressos(page), ["299AA", "7A", "7A"]);
   await page.close();
 });

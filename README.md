@@ -8,7 +8,7 @@ Painel em JavaScript para a pré-operação do **KDABRA Checkout**, aberto por u
 
 É igual à v1: **abra o KDABRA Checkout e clique no favorito Mercearia ou Fresh**. Ele faz tudo sozinho:
 
-1. Lê **todos os caminhões** do filtro da tela. Caminhão novo entra sozinho, sem precisar mexer no código.
+1. Lê **todos os caminhões** do filtro da tela, buscando só as **levas que cada caminhão usa** (1–99 → A/B, 100–149 → HA, 299 → AA…Z etc.). Não testa as 32 levas em todo caminhão.
 2. Imprime, na ordem de prioridade, os pedidos **não impressos** ou **impressos há 7 dias ou mais**.
 3. Confere se o KDABRA registrou cada impressão.
 4. Copia os pedidos impressos para a **Impressos V2**. No final aparece o aviso: é só abrir a planilha e apertar **Ctrl+V**.
@@ -30,9 +30,10 @@ Detalhes em [`docs/regras-operacionais.md`](docs/regras-operacionais.md).
 | Filtro | `Impresso = Todos` |
 | Imprime | `Não foi impresso`, ou `Data Impressão` com **7 dias ou mais** |
 | Ignora | `Pedido pendente`, impresso há menos de 7 dias, data inválida |
-| Ordem | 299A → 299H → 100H–124H → demais 299 → A → B → C |
+| Ordem | 100HA–124HA → 299 (AA…Z) → A → B → C |
+| Levas por caminhão | só as da faixa do caminhão (veja as regras); caminhão fora das faixas busca todas as levas |
 | Caminhões novos | entram no fim do grupo da leva deles (A/H/KA → A, B/KB/NC → B, C → C) |
-| Fora da fila | caminhões **3000 em diante** (aparecem na lista, mas não são impressos) |
+| Fora da fila | caminhões **3000 em diante** (nem são lidos) |
 
 ## Proteções
 
@@ -78,6 +79,7 @@ Quase tudo fica no bloco `CONFIG` no topo de `src/slc-preop.js`:
 
 - `seletores`: IDs dos filtros, da tabela e dos botões;
 - `colunas`: nomes dos cabeçalhos da tabela (as colunas são achadas pelo nome, não pela posição);
+- `levasPorCaminhao`: quais levas cada faixa de caminhão usa (se surgir um caminhão novo numa faixa nova, é aqui que se adiciona);
 - `PRIORIDADES` e `foraDaFila`: ordem de impressão;
 - `tempos`: esperas;
 - `simulacao`: `true` marca e confere sem imprimir.
